@@ -12,3 +12,7 @@ venv/
 .venv/
 env/
 .env/
+
+# PolyPenguin: config local y secreto de la wallet (NUNCA subir)
+config.json
+.wallet_secreto

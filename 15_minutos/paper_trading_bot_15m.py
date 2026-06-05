@@ -10,7 +10,7 @@ from analisis_historico_modulo import ejecutar_analisis_temporal, probabilidad_t
 from cli_util import (init, aviso, ventana, senal, resumen_final,
                       parse_mercado, token_up, simular_fill_clob, verificar_oraculo,
                       revalidar_fill, tendencia_pct, registrar_resultado_real,
-                      resultado_resuelto, FeedChainlink, a_et)
+                      resultado_resuelto, intentar_orden_real, FeedChainlink, a_et)
 
 TF = "15m"
 SOURCE = "coinbase"           # solo para el filtro de régimen (tendencia 90m); el precio en
@@ -244,6 +244,8 @@ async def main():
                                     senal_precio_up = precio_entrada
                                     senal_slug = generar_slug()  # mercado de esta ventana, para leer su liquidación real
                                     senal(TF, f"SEÑAL · +{int(elapsed_min)}min · caída {caida_pct:.2f}% · prob {prob*100:.0f}% · fill ${rev['vwap']:.3f} (mejor ${rev['mejor_ask']:.2f} +slip ${slippage:.3f}/{rev['niveles']}niv +fee {FEE:.2f}) · EV +{ev*100:.1f}% · liq ${liquidez:,.0f}")
+                                    # En modo REAL coloca la compra real (no hace nada en paper).
+                                    intentar_orden_real(TF, mercado["token_id"], precio_entrada)
                                     with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
                                         csv.writer(f).writerow([ahora.strftime("%Y-%m-%d %H:%M:%S"), inicio_str, f"{int(elapsed_min)}",
                                             f"{apertura:,.2f}", f"{minimo:,.2f}", f"{caida_pct:.2f}%",

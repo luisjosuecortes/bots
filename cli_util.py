@@ -1,5 +1,6 @@
 """Salida CLI con iconos (en español) y parseo de mercados de Polymarket."""
 import json
+import os
 import asyncio
 import collections
 from datetime import datetime, timezone, timedelta
@@ -185,6 +186,40 @@ def registrar_resultado_real(tf, gano, lado, precio_entrada, wins, losses,
     resultado(tf, gano, f"{texto} {lado} {detalle} · aciertos {wins}/{total} "
                         f"({tasa:.0f}%) · P&L {pnl:+.2f} (acum {pnl_total:+.2f})")
     return wins, losses, pnl_total, etiqueta
+
+
+def intentar_orden_real(tf, token_id, precio):
+    """En modo REAL, coloca la compra real de UP. Best-effort: nunca rompe el bot.
+
+    Solo opera si el entorno trae POLY_MODO=real (lo activa PolyPenguin al lanzar en
+    modo real); ejecutado de otra forma, el bot se queda en paper. El tamaño de la
+    orden sale de la config (wallet.tamano_usdc). Devuelve True si se colocó.
+    """
+    if os.environ.get("POLY_MODO") != "real":
+        return False
+    try:
+        import config
+        import wallet_real
+    except ImportError:
+        aviso(tf, "modo real: módulos de wallet no disponibles; sigo en paper")
+        return False
+
+    cfg = config.cargar()
+    if not config.wallet_lista(cfg):
+        aviso(tf, "modo real: wallet sin configurar (Ajustes › Wallet); sigo en paper")
+        return False
+
+    tamano_usdc = float(cfg["wallet"].get("tamano_usdc", 5.0))
+    shares = tamano_usdc / precio if precio > 0 else 0.0
+    if shares <= 0:
+        return False
+    try:
+        resp = wallet_real.comprar_up(cfg, token_id, precio, shares)
+        senal(tf, f"💰 ORDEN REAL · {shares:.1f} shares @ ${precio:.3f} (~${tamano_usdc:.2f}) · {resp}")
+        return True
+    except wallet_real.WalletError as e:
+        aviso(tf, f"modo real: no se colocó la orden ({e}); queda solo como señal")
+        return False
 
 
 async def resultado_resuelto(session, slug):

@@ -250,7 +250,32 @@ cat /home/penguin/Documentos/poly/5_minutos/senales_5m.csv
 ### Dependencias
 - Python 3.9+ (usa `zoneinfo`).
 - `aiohttp` (requests asíncronos + WebSocket).
+- `py-clob-client-v2` y `py-builder-relayer-client` (solo para el **modo real** con
+  wallet; `pip install py-clob-client-v2 py-builder-relayer-client`).
 - Resto: librería estándar.
+
+### Modo real (wallet)
+PolyPenguin puede operar en paper (simulado) o **real** (órdenes con tu wallet) usando
+el **CLOB v2** de Polymarket. Se configura en `Ajustes › Modo` y `Ajustes › Wallet`:
+
+- **Clave privada**: se guarda en `.wallet_secreto` (permisos 600, ignorado por git);
+  alternativamente, expórtala en `POLY_PK` y tiene prioridad. Cópiala de
+  polymarket.com › Settings › Export Private Key.
+- **Tipo de firma**: `3` deposit wallet (**el actual**, recomendado para cuentas de
+  polymarket.com), `1` email/Magic (cuentas antiguas), `2` wallet del navegador,
+  `0` EOA (clave propia con fondos). El `funder` (deposit wallet/proxy) **se deriva
+  solo** desde tu clave; no hace falta configurarlo a mano.
+- **Tamaño de orden** (USDC por señal) y **tipo de orden** (`FOK`/`GTC`).
+- Requisitos previos: cuenta de Polymarket con saldo (pUSD) y *allowances* aprobadas
+  (se aprueban solas al operar desde polymarket.com).
+
+> Polymarket migró a CLOB v2: el colateral es **pUSD** dentro de una *deposit wallet*
+> (contrato `0xC011a7…`), no USDC.e suelto. Por eso el saldo on-chain de tu dirección
+> siempre da 0; el saldo operable real solo lo da la API del CLOB v2 con firma `3`.
+
+Las preferencias se guardan en `config.json` (también ignorado por git). Lanzar un bot
+directamente (sin PolyPenguin) nunca opera real: solo lo hace con `POLY_MODO=real`,
+que PolyPenguin activa al iniciar en modo real.
 
 ### APIs Utilizadas (todas públicas, sin autenticación)
 - Polymarket WebSocket de precios Chainlink (`ws-live-data.polymarket.com`).
