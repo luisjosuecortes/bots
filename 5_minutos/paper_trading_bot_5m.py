@@ -88,7 +88,9 @@ async def main():
             csv.writer(f).writerow(['Fecha/Hora', 'Ventana', 'Min transcurrido', 'Apertura', 'Minimo', 'Caida %',
                                     'Prob', 'Ask UP', 'Volumen', 'Liquidez', 'EV', 'Accion', 'Resultado'])
         with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
-            csv.writer(f).writerow([f"=== SESION: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} ==="])
+            w = csv.writer(f)
+            w.writerow([])
+            w.writerow([f"SESION: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}"])
 
     async with aiohttp.ClientSession() as session:
         # Feed Chainlink BTC/USD en vivo (EXACTAMENTE la fuente de Polymarket).

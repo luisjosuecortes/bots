@@ -36,7 +36,7 @@ def leer_salida(process):
 
 
 def rule(char="=", width=72):
-    print(char * width, flush=True)
+    print("", flush=True)
 
 
 def main():
@@ -54,7 +54,7 @@ def main():
     try:
         for nombre, ruta in SCRIPTS.items():
             if not os.path.exists(ruta):
-                print(f"[master] ERROR archivo no encontrado: {ruta}", flush=True)
+                print(f"ERROR archivo no encontrado: {ruta}", flush=True)
                 continue
             process = subprocess.Popen(
                 ["python3", "-u", ruta],
@@ -65,10 +65,10 @@ def main():
             )
             configurar_lectura_no_bloqueante(process)
             processes[nombre] = process
-            print(f"[master] iniciado {nombre} (pid {process.pid})", flush=True)
+            print(f"iniciado {nombre} (pid {process.pid})", flush=True)
             time.sleep(2)
 
-        print(f"[master] {len(processes)} bots corriendo\n", flush=True)
+        print(f"{len(processes)} bots corriendo\n", flush=True)
 
         while all(p.poll() is None for p in processes.values()):
             for nombre, process in processes.items():
@@ -78,21 +78,21 @@ def main():
 
         for nombre, process in processes.items():
             if process.poll() is not None:
-                print(f"[master] {nombre} termino (codigo {process.returncode})", flush=True)
+                print(f"{nombre} termino (codigo {process.returncode})", flush=True)
                 for linea in leer_salida(process):
                     print(linea, flush=True)
 
     except KeyboardInterrupt:
-        print("\n[master] deteniendo todos los bots...", flush=True)
+        print("\ndeteniendo todos los bots...", flush=True)
         for nombre, process in processes.items():
             if process.poll() is None:
                 process.terminate()
-                print(f"[master] {nombre} detenido", flush=True)
+                print(f"{nombre} detenido", flush=True)
         for process in processes.values():
             process.wait()
-        print("[master] datos guardados en:", flush=True)
+        print("datos guardados en:", flush=True)
         for nombre, ruta in CSVS.items():
-            print(f"[master]   {nombre}: {ruta}", flush=True)
+            print(f"  {nombre}: {ruta}", flush=True)
 
 
 if __name__ == "__main__":
