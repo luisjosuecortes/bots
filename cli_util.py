@@ -1,7 +1,129 @@
 """Salida CLI con iconos (en español) y parseo de mercados de Polymarket."""
 import json
 import asyncio
+import collections
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
+
+# Polymarket nombra sus mercados en hora del Este (ET). ZoneInfo maneja
+# automáticamente el cambio EDT(-4)/EST(-5), así que NO hay que hardcodear -4h.
+_ET = ZoneInfo("America/New_York")
+
+
+def ahora_et():
+    """Hora actual en zona horaria del Este (maneja horario de verano EDT/EST)."""
+    return datetime.now(_ET)
+
+
+def a_et(dt):
+    """Convierte un datetime (UTC o aware) a hora del Este (ET), como Polymarket."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_ET)
+
+
+class FeedChainlink:
+    """Feed en vivo del precio Chainlink BTC/USD vía el WebSocket de Polymarket.
+
+    Es EXACTAMENTE la misma fuente que Polymarket usa para mostrar el "precio a
+    superar"/"precio actual" y para RESOLVER los mercados de 5m/15m (Chainlink
+    BTC/USD data stream), no Coinbase ni Binance. Mantiene una conexión de fondo
+    con reconexión automática y un buffer de ~33 min de valores por segundo.
+
+    Uso:
+        feed = FeedChainlink()
+        await feed.conectar(session)         # lanza la tarea de fondo
+        await feed.esperar_datos()           # espera el primer precio
+        feed.precio_actual()                 # último precio (= "precio actual")
+        feed.strike_en(ts_ms)                # 1er precio >= ts_ms (= "precio a superar")
+        feed.minimo_desde(ts_ms)             # mínimo desde un instante (para la caída)
+    """
+
+    URL = "wss://ws-live-data.polymarket.com"
+
+    def __init__(self, maxlen=2200):
+        self.latest_ts = None
+        self.latest_val = None
+        self.hist = collections.deque(maxlen=maxlen)  # (ts_ms, value) ascendente
+        self._task = None
+
+    async def conectar(self, session):
+        self._task = asyncio.create_task(self._run(session))
+
+    async def esperar_datos(self, timeout=10.0):
+        """Espera hasta tener el primer precio (o agota el timeout)."""
+        t = 0.0
+        while self.latest_val is None and t < timeout:
+            await asyncio.sleep(0.2)
+            t += 0.2
+        return self.latest_val is not None
+
+    def _add(self, ts, val):
+        try:
+            ts = int(ts)
+            val = float(val)
+        except (TypeError, ValueError):
+            return
+        self.latest_ts, self.latest_val = ts, val
+        self.hist.append((ts, val))
+
+    async def _run(self, session):
+        sub = {"action": "subscribe", "subscriptions": [
+            {"topic": "crypto_prices_chainlink", "type": "*",
+             "filters": '{"symbol":"btc/usd"}'}]}
+        while True:
+            try:
+                async with session.ws_connect(self.URL, heartbeat=5) as ws:
+                    await ws.send_json(sub)
+                    async for msg in ws:
+                        if msg.type != aiohttp_WSMsgType_TEXT() or not msg.data:
+                            continue
+                        try:
+                            d = json.loads(msg.data)
+                        except (ValueError, TypeError):
+                            continue
+                        pl = d.get("payload") or {}
+                        if isinstance(pl.get("data"), list):      # backfill inicial
+                            for pt in pl["data"]:
+                                self._add(pt.get("timestamp"), pt.get("value"))
+                        elif "value" in pl:                        # update en vivo
+                            self._add(pl.get("timestamp"), pl.get("value"))
+            except Exception:
+                await asyncio.sleep(1.0)  # reconectar
+
+    def precio_actual(self):
+        return self.latest_val
+
+    def strike_en(self, ts_ms):
+        """Primer precio con timestamp >= ts_ms: el 'precio a superar' de la ventana.
+
+        Igual que Polymarket: el primer tick de Chainlink en/ tras la frontera.
+        Devuelve None si el buffer no cubre ese instante (p. ej. recién arrancó).
+        """
+        for t, v in self.hist:
+            if t >= ts_ms:
+                return v
+        return None
+
+    def minimo_desde(self, ts_ms):
+        """Mínimo de Chainlink desde 'ts_ms' (caída real intra-ventana), o None."""
+        vals = [v for t, v in self.hist if t >= ts_ms]
+        return min(vals) if vals else None
+
+
+def _aiohttp_wsmsgtype_text_cache():
+    import aiohttp
+    return aiohttp.WSMsgType.TEXT
+
+
+_WS_TEXT = None
+
+
+def aiohttp_WSMsgType_TEXT():
+    global _WS_TEXT
+    if _WS_TEXT is None:
+        _WS_TEXT = _aiohttp_wsmsgtype_text_cache()
+    return _WS_TEXT
 
 
 def _p(icono, tf, msg):
@@ -39,32 +161,64 @@ def resumen_final(tf, wins, losses, pnl_total):
     _p(icono, tf, f"RESUMEN  {total} señales · {wins}W/{losses}L ({tasa:.0f}%) · {estado} neta {pnl_total:+.2f} u")
 
 
-def registrar_resultado(tf, apertura_ant, cierre_ant, senal_ant, precio_up, wins, losses, pnl_total):
-    """Resuelve la señal de la ventana anterior y actualiza contadores y P&L.
+def registrar_resultado_real(tf, gano, lado, precio_entrada, wins, losses,
+                             pnl_total, detalle=""):
+    """Actualiza contadores y P&L usando el resultado REAL de Polymarket.
 
-    P&L en "unidades" de Polymarket: comprar UP a `precio_up`; si gana paga 1.0
-    (beneficio 1-precio_up), si pierde se pierde lo pagado (-precio_up).
-    Devuelve (wins, losses, pnl_total, etiqueta) donde etiqueta es "WIN"/"LOSS"/None.
+    'gano' viene de la LIQUIDACIÓN real del mercado (no se infiere con velas).
+    P&L en unidades: si gana paga 1.0 (beneficio 1-entrada); si pierde se pierde
+    lo pagado (-entrada). Devuelve (wins, losses, pnl_total, etiqueta).
     """
-    if not (senal_ant and apertura_ant and cierre_ant):
-        return wins, losses, pnl_total, None
-    gano = cierre_ant >= apertura_ant
     if gano:
         wins += 1
-        pnl = 1.0 - precio_up
+        pnl = 1.0 - precio_entrada
         etiqueta = "WIN"
         texto = "GANÓ"
     else:
         losses += 1
-        pnl = -precio_up
+        pnl = -precio_entrada
         etiqueta = "LOSS"
         texto = "PERDIÓ"
     pnl_total += pnl
     total = wins + losses
     tasa = wins / total * 100 if total else 0
-    resultado(tf, gano, f"{texto}  ${apertura_ant:,.0f}→${cierre_ant:,.0f} · "
-                        f"aciertos {wins}/{total} ({tasa:.0f}%) · P&L {pnl:+.2f} (acum {pnl_total:+.2f})")
+    resultado(tf, gano, f"{texto} {lado} {detalle} · aciertos {wins}/{total} "
+                        f"({tasa:.0f}%) · P&L {pnl:+.2f} (acum {pnl_total:+.2f})")
     return wins, losses, pnl_total, etiqueta
+
+
+async def resultado_resuelto(session, slug):
+    """Resultado REAL con el que Polymarket liquidó un mercado ya cerrado.
+
+    Lee outcomePrices del mercado una vez 'closed':
+      ['1','0'] -> ganó 'UP';  ['0','1'] -> ganó 'DOWN'.
+    Es la liquidación real de Polymarket (Chainlink/UMA), 100% exacta: no aproxima
+    el oráculo con Coinbase/Binance. Devuelve 'UP', 'DOWN', o None si aún no ha
+    cerrado/liquidado de forma concluyente.
+    """
+    try:
+        url = f"https://gamma-api.polymarket.com/events?slug={slug}"
+        async with session.get(url) as resp:
+            data = await resp.json()
+        if not data:
+            return None
+        markets = data[0].get("markets") or []
+        if not markets:
+            return None
+        m = markets[0]
+        if not m.get("closed"):
+            return None
+        precios = json.loads(m.get("outcomePrices", "[]"))
+        if len(precios) < 2:
+            return None
+        up, down = float(precios[0]), float(precios[1])
+        if up >= 0.99 and down <= 0.01:
+            return "UP"
+        if down >= 0.99 and up <= 0.01:
+            return "DOWN"
+        return None  # cerrado pero aún no liquidado de forma concluyente
+    except Exception:
+        return None
 
 
 def _to_float(*valores):
@@ -115,7 +269,6 @@ def token_up(event):
 _ORACULO_ESPERADO = {
     "5m": "chainlink",
     "15m": "chainlink",
-    "1h": "binance",
 }
 
 
@@ -123,8 +276,8 @@ def verificar_oraculo(event, tf):
     """Comprueba que la fuente de resolución del mercado sigue siendo la esperada.
 
     Polymarket puede cambiar el oráculo al crear nuevos contratos (p. ej. pasar de
-    Chainlink a Pyth) sin avisar. Si eso ocurre, nuestra calibración (Coinbase/Binance)
-    dejaría de coincidir con la resolución y apostaríamos a ciegas.
+    Chainlink a Pyth) sin avisar. Si eso ocurre, el feed Chainlink dejaría de
+    coincidir con la resolución y operaríamos a ciegas.
 
     Devuelve (ok, mensaje):
       - ok=True  y mensaje=None        → el oráculo esperado SÍ aparece en la descripción.
@@ -157,7 +310,7 @@ def verificar_oraculo(event, tf):
                    f"Verifica manualmente la fuente de resolución.")
 
 
-_GRAN_COINBASE = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
+_GRAN_COINBASE = {"1m": 60, "5m": 300, "15m": 900}
 
 
 async def _binance_klines(session, interval, limit=None, start_ms=None):
@@ -188,63 +341,6 @@ async def _coinbase_klines(session, interval, limit=None, start_dt=None, end_dt=
     return norm
 
 
-async def precio_vivo(session, source="binance"):
-    """Precio actual de BTC en la fuente indicada. Devuelve float o None."""
-    try:
-        if source == "coinbase":
-            url = "https://api.exchange.coinbase.com/products/BTC-USD/ticker"
-            async with session.get(url) as resp:
-                return float((await resp.json())["price"])
-        url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
-        async with session.get(url) as resp:
-            return float((await resp.json())["price"])
-    except Exception:
-        return None
-
-
-async def precio_frontera(session, frontera_dt, source="binance"):
-    """Precio EXACTO de BTC en el instante 'frontera_dt' (inicio/fin de ventana).
-
-    Determinista: usa la APERTURA de la vela de 1m que empieza en esa frontera. No
-    depende de a qué segundo concreto consulte cada bot, así todos obtienen el MISMO
-    precio de cierre para la misma frontera (corrige el desfase del ticker en vivo).
-    Usa la misma fuente que la resolución del mercado. Devuelve float o None.
-    """
-    try:
-        if source == "coinbase":
-            fin = frontera_dt + timedelta(minutes=1)
-            velas = await _coinbase_klines(session, "1m", start_dt=frontera_dt, end_dt=fin)
-            for v in velas:
-                if v[0] == int(frontera_dt.timestamp() * 1000):
-                    return v[1]
-            return velas[0][1] if velas else None
-        velas = await _binance_klines(session, "1m", limit=1, start_ms=int(frontera_dt.timestamp() * 1000))
-        return velas[0][1] if velas else None
-    except Exception:
-        return None
-
-
-async def apertura_y_minimo(session, inicio_ventana, source="binance"):
-    """(apertura, minimo) reales de la ventana usando velas de 1m desde su inicio.
-
-    Evita inicializar el minimo a la apertura cuando el bot arranca a mitad de ventana
-    (lo que generaba una caída 0.00% falsa). Usa la fuente de resolución del mercado.
-    """
-    try:
-        if source == "coinbase":
-            velas = await _coinbase_klines(session, "1m", start_dt=inicio_ventana)
-        else:
-            velas = await _binance_klines(session, "1m", limit=120,
-                                          start_ms=int(inicio_ventana.timestamp() * 1000))
-        if velas:
-            apertura = velas[0][1]
-            minimo = min(v[3] for v in velas)
-            return apertura, minimo
-    except Exception:
-        pass
-    return None, None
-
-
 async def tendencia_pct(session, minutos, source="binance"):
     """Cambio % de BTC en los últimos 'minutos' (régimen de mercado).
 
@@ -265,28 +361,6 @@ async def tendencia_pct(session, minutos, source="binance"):
     except Exception:
         pass
     return 0.0
-
-
-async def mejor_ask_clob(session, token_id):
-    """Precio EJECUTABLE para COMPRAR UP: mejor (menor) ask del order book del CLOB.
-
-    Devuelve (precio_ask, tamano_disponible) o (0.0, 0.0) si no hay libro.
-    Es más realista que outcomePrices (que es un punto medio): es lo que de verdad
-    pagarías al entrar al mercado.
-    """
-    if not token_id:
-        return 0.0, 0.0
-    try:
-        url = f"https://clob.polymarket.com/book?token_id={token_id}"
-        async with session.get(url) as resp:
-            book = await resp.json()
-        asks = book.get("asks") or []
-        if not asks:
-            return 0.0, 0.0
-        mejor = min(asks, key=lambda a: float(a["price"]))
-        return float(mejor["price"]), float(mejor.get("size", 0.0))
-    except Exception:
-        return 0.0, 0.0
 
 
 async def simular_fill_clob(session, token_id, tamano_orden):

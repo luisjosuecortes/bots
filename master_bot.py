@@ -5,13 +5,11 @@ import fcntl
 from datetime import datetime
 
 SCRIPTS = {
-    "1h": "/home/penguin/Documentos/poly/1_hora/paper_trading_bot.py",
     "15m": "/home/penguin/Documentos/poly/15_minutos/paper_trading_bot_15m.py",
     "5m": "/home/penguin/Documentos/poly/5_minutos/paper_trading_bot_5m.py",
 }
 
 CSVS = {
-    "1h": "/home/penguin/Documentos/poly/1_hora/senales_1h.csv",
     "15m": "/home/penguin/Documentos/poly/15_minutos/senales_15m.csv",
     "5m": "/home/penguin/Documentos/poly/5_minutos/senales_5m.csv",
 }

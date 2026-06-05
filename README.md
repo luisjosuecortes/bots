@@ -2,9 +2,13 @@
 
 ## Resumen del Proyecto
 
-Sistema automatizado de **Paper Trading** (simulación sin riesgo) para mercados de predicción de Bitcoin en Polymarket. El sistema utiliza análisis estadístico de datos históricos de Binance para calcular probabilidades reales de reversión a la media, y las compara con los precios de las acciones en Polymarket para detectar oportunidades de **Valor Esperado (EV) positivo**.
+Sistema automatizado de **Paper Trading** (simulación sin riesgo) para los mercados *Bitcoin Up or Down* de **5 y 15 minutos** de Polymarket. Usa análisis estadístico de datos históricos para calcular la probabilidad real de reversión a la media, la compara con el precio ejecutable real del order book de Polymarket y detecta oportunidades de **Valor Esperado (EV) positivo**.
 
-**Estado actual**: Sistema completo, probado y en fase de validación estadística.
+Todas las fuentes en vivo son **exactamente las de Polymarket**: el precio (y el "precio a superar") vienen del **feed de Chainlink BTC/USD** y el resultado de cada operación se lee de la **liquidación real** del mercado. Así el paper trading es fiel a lo que ocurriría operando en serio.
+
+**Estado actual**: Sistema completo, en fase de validación estadística.
+
+> 📖 Para la explicación paso a paso en lenguaje claro, ver **`COMO_FUNCIONA.md`**.
 
 ---
 
@@ -14,39 +18,35 @@ Sistema automatizado de **Paper Trading** (simulación sin riesgo) para mercados
 
 ```
 /home/penguin/Documentos/poly/
-├── analisis_historico_modulo.py          # Módulo compartido: análisis temporal de Binance
-├── cli_util.py                           # Salida CLI con iconos, P&L y CLOB de Polymarket
-├── master_bot.py                         # Orquestador que lanza los 3 bots simultáneamente
-├── README.md                             # Este archivo de contexto
-│
-├── 1_hora/
-│   ├── paper_trading_bot.py              # Bot de 1 hora (auto-calibrable)
-│   ├── analisis_historico.py             # Script de análisis independiente
-│   └── senales_1h.csv                    # Datos acumulados de señales
+├── analisis_historico_modulo.py          # Módulo compartido: calibración temporal (histórico USD)
+├── cli_util.py                           # CLI con iconos, feed Chainlink, P&L y CLOB de Polymarket
+├── master_bot.py                         # Orquestador que lanza los 2 bots simultáneamente
+├── README.md                             # Este archivo
+├── COMO_FUNCIONA.md                      # Explicación detallada en lenguaje claro
 │
 ├── 15_minutos/
 │   ├── paper_trading_bot_15m.py          # Bot de 15 minutos (auto-calibrable)
-│   └── senales_15m.csv                  # Datos acumulados de señales
+│   └── senales_15m.csv                   # Datos acumulados de señales
 │
 └── 5_minutos/
     ├── paper_trading_bot_5m.py           # Bot de 5 minutos (auto-calibrable)
     ├── analisis_historico_5m.py          # Script de análisis independiente
-    └── senales_5m.csv                   # Datos acumulados de señales
+    └── senales_5m.csv                    # Datos acumulados de señales
 ```
 
 ### Flujo de Ejecución
 
 1. **Inicio**: Se ejecuta `master_bot.py` o un bot individual.
-2. **Auto-calibración**: El bot descarga 30 días de datos de Binance para su intervalo específico.
-3. **Cálculo de parámetros**: Analiza los datos históricos y construye una **tabla de probabilidad condicionada al tiempo** (P de cierre UP según los minutos transcurridos y la caída acumulada hasta ese momento).
-4. **Monitoreo continuo**: Cada ciclo (30s-1min según el timeframe), el bot:
-   - Lee el precio actual de Binance.
-   - Calcula la caída acumulada desde la apertura de la ventana y los minutos transcurridos.
-   - Consulta la tabla temporal para obtener la probabilidad real condicionada al tiempo.
-   - Consulta el **precio ejecutable real** simulando el fill de una orden de `TAMANO_ORDEN` (100 unidades) caminando la profundidad del order book CLOB de "UP" (VWAP), lo que modela el slippage real.
-   - Aplica filtros de liquidez, llenado completo de la orden y EV.
-   - Si hay señal válida (una sola por ventana), la registra en el CSV.
-5. **Re-calibración**: Cada 24 horas, el bot actualiza automáticamente sus parámetros.
+2. **Auto-calibración**: El bot descarga 30 días de velas (Coinbase BTC/USD) y construye una **tabla de probabilidad condicionada al tiempo** (P de cierre UP según los minutos transcurridos y la caída acumulada hasta ese momento). Esto alimenta **solo el modelo de entrada**.
+3. **Conexión al feed Chainlink**: Abre el WebSocket de Polymarket (`wss://ws-live-data.polymarket.com`) para recibir el precio BTC/USD por segundo — la **misma fuente** que Polymarket muestra y con la que resuelve.
+4. **Monitoreo continuo**: Cada ciclo (30s en 5m, 1min en 15m), el bot:
+   - Resuelve las señales pendientes leyendo la **liquidación real** de Polymarket.
+   - Lee el **precio a superar** (strike) y el **precio actual** del feed Chainlink.
+   - Calcula la caída acumulada y los minutos transcurridos; consulta la tabla temporal.
+   - Simula el **fill real** (VWAP) de una orden de 100 unidades caminando el order book CLOB de "UP".
+   - Aplica los filtros (liquidez, llenado completo, EV, régimen, oráculo, re-validación).
+   - Si hay señal válida (una por ventana), la registra en el CSV.
+5. **Re-calibración**: Cada 24 horas, en un hilo aparte (no corta el feed).
 
 ---
 
@@ -54,9 +54,9 @@ Sistema automatizado de **Paper Trading** (simulación sin riesgo) para mercados
 
 ### Probabilidad Condicionada al Tiempo (corrige el sesgo de look-ahead)
 
-El sistema **ya no** usa un único umbral de caída por timeframe. Eso medía la caída *máxima de toda la ventana* y aplicarlo en vivo era sesgo de look-ahead (al abrir la ventana la caída es ~0 pero aún no sabes cuánto caerá). Ahora se construye una tabla **P(UP | minutos transcurridos, caída acumulada)**.
+No se usa un único umbral de caída por timeframe (eso medía la caída *máxima de toda la ventana* y aplicarlo en vivo era look-ahead). Se construye una tabla **P(UP | minutos transcurridos, caída acumulada)**.
 
-Ejemplo real para 5m (caída acumulada ≤ 0.05%), que muestra por qué el viejo 71% estaba inflado:
+Ejemplo real para 5m (caída acumulada ≤ 0.05%):
 
 | Minutos transcurridos | Probabilidad UP |
 | :--- | :--- |
@@ -67,201 +67,147 @@ Ejemplo real para 5m (caída acumulada ≤ 0.05%), que muestra por qué el viejo
 
 La ventaja real solo aparece avanzada la ventana, no al abrir. El bot no emite señal antes del primer checkpoint.
 
-### Filtros de Seguridad (Aplicados a todos los bots)
+### Filtros de Seguridad (aplicados a ambos bots)
 
 | Filtro | Valor | Justificación |
 | :--- | :--- | :--- |
-| **Liquidez mínima** | ≥ $5,000 USD | Profundidad del order book (`liquidityNum` de Polymarket). Métrica correcta para evitar slippage en mercados de corta duración, donde el "volumen 24h" es estructuralmente diminuto porque el mercado se recrea cada ventana. |
-| **Llenado completo de la orden** | Se debe poder llenar `TAMANO_ORDEN` (100 unidades) | Se simula barrer el order book del CLOB de menor a mayor precio. Si no hay profundidad para llenar las 100 unidades, no hay señal: evita operar donde solo puedes comprar una cantidad ínfima al precio mostrado. |
-| **Precio de entrada** | **VWAP del fill simulado** + colchón de fee | Se camina el order book real acumulando tamaño hasta llenar la orden y se calcula el **precio promedio ponderado (VWAP)** — esto modela el slippage real (una orden grande "come" varios niveles). Se suma un pequeño colchón `FEE` (0.01) por comisiones. Es **solo lectura / gratis**: no envía órdenes. |
-| **Ventaja estadística (Wilson)** | Solo buckets con **límite inferior de Wilson (1 cola, 95%) > 0.5** | No basta con que la proporción cruda `wins/total` supere 50%: se exige que el **límite inferior** del intervalo de confianza lo supere. Esto poda automáticamente las ventajas que son ruido por pocas muestras. Validado out-of-sample: subió el winrate de 15m 60.3%→61.8% y de 1h 71.0%→75.2% al eliminar exactamente los buckets que no replican. |
-| **Convicción mínima** | `prob (Wilson LB) ≥ MIN_PROB` (0.52) | Piso de convicción por encima del corte de Wilson. Evita operar señales apenas sobre el azar aunque el precio sea barato. Es un knob: subirlo opera menos pero con más convicción. |
-| **EV Neto mínimo** | ≥ 5% | Se calcula como `prob − precio_entrada`, donde `prob` es el **Wilson LB conservador** y `precio_entrada` es el VWAP del fill **con** colchón de fee. Así el EV nunca sobreestima ni la ventaja ni el precio. |
-| **Filtro de régimen** | Sin operar solo en *free-fall* real | La reversión de micro-caídas falla en una caída sostenida y agresiva. Umbral **−2%** (5m/60m · 15m/90m · 1h/360m). Se relajó desde −0.6%/−0.8% tras comprobar empíricamente que las caídas moderadas (−0.6…−2%) históricamente rebotan ~70%; el filtro solo pausa en *free-fall* genuino como seguro de cola ante un cambio de régimen fuera de muestra. |
-| **Verificación de oráculo** | La descripción del mercado debe mencionar el oráculo esperado (5m/15m → Chainlink · 1h → Binance) | Polymarket puede cambiar la fuente de resolución al crear nuevos contratos. En cada intento de señal se lee la descripción real del mercado; si el oráculo esperado no aparece (o aparece otro como Pyth), el bot **pausa y alerta** en vez de apostar a ciegas con una calibración que ya no coincide. |
-| **Re-validación pre-fill (orden límite)** | Tras detectar la señal, espera `RETARDO_FILL_S` (0.5s), re-lee el order book y solo "ejecuta" si el precio fresco mantiene `EV ≥ 5%` | Modela la latencia decisión→fill (el *espejismo del ask*): el ask que viste puede desaparecer antes de que tu orden llegue al CLOB. Simula una **orden límite** al peor precio aceptable (`prob − margen`): si el libro se movió en tu contra, la orden **no llena** (oportunidad perdida) en vez de pagar de más. El precio registrado es el del fill fresco, nunca uno mejor del que conseguirías en real. |
+| **Liquidez mínima** | ≥ $5,000 USD | Profundidad del order book (`liquidityNum`). Métrica correcta para slippage en mercados cortos (el "volumen 24h" es diminuto porque el mercado se recrea cada ventana). |
+| **Llenado completo de la orden** | Se debe poder llenar 100 unidades caminando el libro | Si no hay profundidad, no hay señal. |
+| **Precio de entrada** | **VWAP del fill simulado** + colchón de fee (0.01) | Modela el slippage real (una orden grande "come" varios niveles). Solo lectura / gratis: no envía órdenes. |
+| **Ventaja estadística (Wilson)** | Solo buckets con **Wilson LB (1 cola, 95%) > 0.5** | Poda automáticamente las ventajas que son ruido por pocas muestras. |
+| **Convicción mínima** | `prob (Wilson LB) ≥ MIN_PROB` (0.52) | Piso por encima del corte de Wilson. Knob frecuencia↔convicción. |
+| **EV neto mínimo** | ≥ 5% | `prob − precio_entrada`, con `prob` = Wilson LB conservador y `precio_entrada` = VWAP + fee. |
+| **Filtro de régimen** | Sin operar solo en *free-fall* real (**−2%**: 5m/60m · 15m/90m) | Las caídas moderadas (−0.6…−2%) históricamente rebotan ~70%; el filtro solo pausa en *free-fall* genuino. |
+| **Verificación de oráculo** | La descripción del mercado debe mencionar **Chainlink** | Si Polymarket cambia la fuente de resolución, el bot **pausa y alerta** en vez de operar a ciegas. |
+| **Re-validación pre-fill (orden límite)** | Espera `RETARDO_FILL_S` (0.5s), re-lee el libro y solo "ejecuta" si mantiene `EV ≥ 5%` | Modela la latencia decisión→fill (el *espejismo del ask*) como una orden límite: si el libro se movió en contra, no llena. |
 
-### Filtros Sniper (Evitar operaciones a último segundo)
+### Filtros Sniper (evitar operaciones a último segundo)
 
-| Timeframe | Ventana de pausa | Justificación |
-| :--- | :--- | :--- |
-| 1 Hora | Últimos 5 minutos | Evita ruido de cierre |
-| 15 Minutos | Últimos 2 minutos | Evita ruido de cierre |
-| 5 Minutos | Último minuto | Evita ruido de cierre |
+| Timeframe | Ventana de pausa |
+| :--- | :--- |
+| 15 Minutos | Últimos 2 minutos |
+| 5 Minutos | Último minuto |
 
 ### Frecuencias de Monitoreo y Refresh
 
 | Timeframe | Frecuencia de chequeo | Refresh de parámetros |
 | :--- | :--- | :--- |
-| 1 Hora | Cada 1 minuto | Cada 24 horas |
 | 15 Minutos | Cada 1 minuto | Cada 24 horas |
 | 5 Minutos | Cada 30 segundos | Cada 24 horas |
 
 ---
 
-## Validación de Resultados en Tiempo Real
+## Validación de Resultados (resolución EXACTA)
 
-### Cómo funciona la validación
+Cada bot valida el resultado de sus señales con la **liquidación oficial de Polymarket**, no infiriéndolo con velas:
 
-Cada bot ahora valida automáticamente el resultado de las señales anteriores:
+1. Al cerrar la ventana, Polymarket marca el mercado `closed` y pone `outcomePrices` en `["1","0"]` (ganó **UP**) o `["0","1"]` (ganó **DOWN**).
+2. El bot consulta ese resultado (reintentando unos segundos, porque la liquidación tarda un poco).
+3. Si compramos UP y ganó UP → **WIN**; si no → **LOSS**.
+4. Actualiza wins/losses y el P&L acumulado, y lo registra en el CSV.
 
-1. **Al inicio de cada nueva ventana**, el bot verifica el resultado de la ventana anterior.
-2. **Si hubo una señal**, compara el precio de cierre (el precio de Binance al momento exacto de cierre) con el precio de apertura.
-3. **Si el cierre ≥ apertura**, la señal fue **GANADORA** ✅.
-4. **Si el cierre < apertura**, la señal fue **PERDEDORA** ❌.
-5. **Actualiza los contadores** de wins/losses y calcula la tasa de acierto acumulada.
-6. **Imprime el resultado** en la terminal con la tasa de acierto actualizada.
-7. **Registra el resultado** en el CSV en la columna "Resultado".
+Esto es 100% exacto: es literalmente lo que Polymarket pagó, sin aproximar Chainlink.
 
-### Estructura del CSV (Actualizada)
+### Estructura del CSV
 
 | Columna | Descripción |
 | :--- | :--- |
-| Fecha/Hora | Marca de tiempo exacta de la detección de la señal |
-| Ventana | Inicio de la ventana de tiempo (ej: "2026-06-03 22:30:00") |
-| Min transcurrido | Minutos transcurridos dentro de la ventana al detectar la señal |
-| Apertura | Precio de BTC al inicio de la ventana |
-| Minimo | Precio mínimo alcanzado hasta el momento de la señal |
-| Caída % | Caída acumulada desde la apertura hasta ese momento |
-| Prob | Probabilidad UP condicionada al tiempo (tabla temporal) |
-| Precio entrada | Precio ejecutable real = **VWAP del fill simulado** (order book CLOB) + fee |
-| Volumen | Volumen del mercado en Polymarket (`mercado.volumeNum`) |
-| Liquidez | Profundidad del order book (`mercado.liquidityNum`) — sobre esta se aplica el filtro |
-| EV | Valor Esperado neto (Prob − precio entrada) |
-| Acción | "COMPRAR UP" (señal de compra) |
-| **Resultado** | **"WIN" o "LOSS"** (se llena al cierre de la ventana) |
+| Fecha/Hora | Marca de tiempo de la detección de la señal (UTC) |
+| Ventana | Inicio de la ventana |
+| Min transcurrido | Minutos dentro de la ventana al detectar |
+| Apertura | **Precio a superar** (Chainlink, en la frontera) |
+| Minimo | Mínimo alcanzado hasta el momento de la señal |
+| Caída % | Caída acumulada |
+| Prob | Probabilidad UP condicionada al tiempo |
+| Ask UP | Precio ejecutable real = VWAP del fill + fee |
+| Volumen | Volumen del mercado |
+| Liquidez | Profundidad del order book (filtro) |
+| EV | Valor esperado neto |
+| Acción | "COMPRAR UP" |
+| **Resultado** | **"WIN" o "LOSS"** (se llena al resolver Polymarket) |
 
-### Ejemplo de salida en terminal (CLI con iconos)
+### Ejemplo de salida en terminal
 
 ```
 ⚙️  [ 5m] calibrando 30 días (probabilidad por minuto)…
 ⚙️  calib 5m: 43201 sub-velas · 8640 ventanas · 4 checkpoints · 4 rangos con ventaja
-⚙️  [ 5m] filtros: liquidez≥$5,000 · orden 100u · EV≥5% · fee 0.01 · ventana 5m
-🕒 [ 5m] 17:35→17:40 · apertura $63,084.00 · cierre ant $63,001
+⚙️  [ 5m] feed Chainlink conectado · BTC $60,373.50
+🕒 [ 5m] 16:00-16:05 ET · precio a superar $60,277.32 · actual $60,373.50
 🔴 [ 5m] SEÑAL · +3min · caída 0.03% · prob 63% · fill $0.520 (mejor $0.52 +slip $0.000/1niv +fee 0.01) · EV +10.7% · liq $10,063
-🟢 [ 5m] GANÓ  $63,084→$63,120 · aciertos 1/1 (100%) · P&L +0.47 (acum +0.47)
+🟢 [ 5m] GANÓ UP (… · resolvió UP) · aciertos 1/1 (100%) · P&L +0.47 (acum +0.47)
 ```
 
-- 🔴 señal (compra) · 🟢 ganó / 🔴 perdió al cerrar la ventana.
-- Solo se emite **una señal por ventana**.
-
-### Resumen final al detener el bot
-
-Al presionar `Ctrl + C`, cada bot muestra un resumen con P&L neto (🟢 ganancia / 🔴 pérdida):
+Al presionar `Ctrl + C`, cada bot muestra un resumen:
 
 ```
 🟢 [ 5m] RESUMEN  12 señales · 9W/3L (75%) · GANANCIA neta +2.40 u
 ```
 
-El P&L se calcula en "unidades": comprar UP al precio de entrada paga 1.0 si gana (beneficio `1 − precio`) y pierde el precio pagado si pierde.
-
 ---
 
 ## Fuentes de Datos
 
-Cada bot usa la **misma fuente de precio que la resolución de su mercado** (esto es clave para fidelidad):
+| Uso | Fuente | Detalle |
+| :--- | :--- | :--- |
+| **Precio en vivo + precio a superar** | **Chainlink BTC/USD** (WebSocket Polymarket) | `wss://ws-live-data.polymarket.com`, tópico `crypto_prices_chainlink`. **Misma fuente que la resolución.** Sin auth. |
+| **Resolución / resultado** | **Polymarket** (Gamma API) | `outcomePrices` del mercado cerrado: `["1","0"]`=UP, `["0","1"]`=DOWN. |
+| **Precio ejecutable (entrada)** | **Polymarket CLOB** | `clob.polymarket.com/book?token_id=...`, fill simulado por VWAP. Solo lectura. |
+| **Histórico de calibración** | **Coinbase BTC/USD** | 30 días de velas 1m. Solo alimenta el modelo de entrada (par USD ≈ Chainlink dentro de ~0.03%). |
+| **Filtro de régimen** | **Coinbase BTC/USD** | Tendencia 60m (5m) / 90m (15m). Filtro grueso de free-fall. |
 
-| Timeframe | Fuente de resolución de Polymarket | Fuente de precio del bot | ¿Coinciden? |
-| :--- | :--- | :--- | :--- |
-| **1 Hora** | Binance BTC/**USDT**, vela 1H (`close ≥ open`) | Binance BTC/USDT | ✅ Exacto (misma) |
-| **5 Minutos** | **Chainlink BTC/USD** data stream | **Coinbase BTC/USD** | ✅ Mismo par USD (≈0.03%) |
-| **15 Minutos** | **Chainlink BTC/USD** data stream | **Coinbase BTC/USD** | ✅ Mismo par USD (≈0.03%) |
+> **¿Por qué Chainlink en vivo y no Coinbase?** La resolución de 5m/15m es Chainlink BTC/USD. Coinbase/Binance se desvían **$13–23** del valor real de Chainlink, suficiente para invertir el resultado en una vela de 5 min. El feed de Polymarket entrega el precio exacto de Chainlink, así que el "precio a superar", el precio actual y la resolución coinciden 1:1 con lo que ves en la web. Chainlink Data Streams no ofrece histórico gratuito, por eso la **calibración** (offline, no decide el resultado) usa Coinbase como mejor proxy USD.
 
-### ¿Por qué Coinbase para 5m/15m?
-- La resolución de 5m/15m es **Chainlink BTC/USD**, que es un **agregado de mercados spot USD** (Coinbase, Kraken, Bitstamp). Esas fuentes USD coinciden entre sí dentro de **~0.03%**.
-- Binance BTC/**USDT** está sesgado **+0.15%** respecto al par USD (medido en vivo: +0.159%). Como ese sesgo es **mayor** que el umbral de caída de 5m (0.05%), usar Binance para 5m/15m introducía un error estructural que invertía señales.
-- **Chainlink Data Streams** no es de acceso libre (requiere credenciales con firma HMAC). **Coinbase BTC/USD** es la mejor aproximación gratuita: mismo par (USD), prácticamente sobre la mediana de las fuentes USD, y ofrece histórico de velas para calibrar.
+### Slugs de mercados
+- 5 Minutos: `btc-updown-5m-{timestamp_unix_inicio}`
+- 15 Minutos: `btc-updown-15m-{timestamp_unix_inicio}`
 
-### Endpoints
-- **Binance** (bot 1h): `api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={i}` y `.../ticker/price`.
-- **Coinbase** (bots 5m/15m): `api.exchange.coinbase.com/products/BTC-USD/candles?granularity={s}` y `.../ticker`.
-- Sub-velas para la probabilidad por minuto: 1m (5m y 15m) y 5m (1h).
-
-### Polymarket (Precios de acciones UP/DOWN)
-- **API de eventos (gamma)**: `https://gamma-api.polymarket.com/events?slug={slug}` — da liquidez, volumen y `clobTokenIds`.
-- **API del order book (CLOB)**: `https://clob.polymarket.com/book?token_id={tokenId}` — da todos los niveles de `asks`. Se simula el **fill real** caminando esos niveles (VWAP) para una orden de 100 unidades. **Solo lectura, gratis**: no se envían órdenes ni se necesita wallet.
-- **Slugs de mercados**:
-  - 1 Hora: `bitcoin-up-or-down-{mes}-{dia}-{año}-{hora}am/pm-et`
-  - 5 Minutos: `btc-updown-5m-{timestamp_unix}`
-  - 15 Minutos: `btc-updown-15m-{timestamp_unix}`
-
-### Hora exacta de cierre
-- Los mercados resuelven **en la frontera exacta** de la ventana (ej. 5m: …:00, :05, :10; 1h: en punto), confirmado por los campos `startTime`/`endDate` del evento. **No cierran antes de tiempo.** Lo que puede detenerse un poco antes es la *aceptación de órdenes nuevas*, no el precio de resolución.
-- **Cierre determinista (corrige el bug de sincronización)**: el precio de cierre ya **no** se toma del *ticker* en vivo (que daba valores distintos en cada bot según el segundo de la consulta), sino de la **apertura de la vela de 1m en la frontera** (`precio_frontera`), en la fuente correspondiente. Así, todos los bots leen exactamente el mismo precio para la misma frontera. Verificado: a las 19:30 los bots de 15m y 5m leen idéntico $64,026.28 (Coinbase).
+### Hora en ET
+Los mercados se nombran y muestran en hora del Este. El bot usa `America/New_York` (DST automático EDT/EST), por eso la ventana sale como `16:00-16:05 ET`, igual que Polymarket.
 
 ---
 
 ## Descubrimientos Clave del Análisis
 
-### 1. Patrón de Reversión a la Media (condicionado al tiempo)
-Existe un patrón de reversión, pero su fuerza **depende del momento de la ventana**. Una caída acumulada pequeña al inicio aporta poca ventaja; la ventaja crece a medida que avanza la ventana (ver tabla temporal de 5m: 53.7% a +1min → 67.4% a +4min).
+### 1. Reversión a la media condicionada al tiempo
+Existe un patrón de reversión, pero su fuerza **depende del momento de la ventana**: una caída pequeña al inicio aporta poca ventaja; la ventaja crece a medida que avanza la ventana (5m: 53.7% a +1min → 67.4% a +4min).
 
-### 2. El Look-ahead Inflaba las Probabilidades
-El enfoque anterior (umbral sobre la caída máxima de toda la ventana) reportaba 71–87%, pero esos números no son alcanzables en vivo porque al abrir la ventana no se conoce la caída futura. La tabla temporal corrige esto.
+### 2. El look-ahead inflaba las probabilidades
+El enfoque anterior (umbral sobre la caída máxima de toda la ventana) reportaba 71–87%, no alcanzables en vivo. La tabla temporal lo corrige.
 
-### 3. El Precio Ejecutable Importa (fill simulado por profundidad)
-`outcomePrices` es un punto medio; lo que pagas de verdad es peor. En vez de usar solo el mejor ask, se **simula el fill** de una orden de 100 unidades caminando el order book del CLOB nivel a nivel y se calcula el **precio promedio ponderado (VWAP)**. Esto modela el **slippage real**: una orden grande "come" varios niveles y paga más caro. Si el libro no tiene profundidad para llenar la orden, no hay señal. Es de solo lectura (gratis); cuando se pase a real, el mismo cálculo predice el fill efectivo.
+### 3. El precio ejecutable importa (fill por profundidad)
+`outcomePrices` es un punto medio; lo que pagas es peor. Se simula el fill de 100 unidades caminando el order book (VWAP) para modelar el slippage real. Si no hay profundidad, no hay señal.
 
-### 4. 5 Minutos Genera Más Datos
-Con 8,640 ventanas en 30 días, el bot de 5 minutos es el que más rápido acumula datos para validación.
+### 4. La fuente de resolución debe ser exacta
+Aproximar Chainlink con Coinbase/Binance metía un error de $13–23 que podía invertir el resultado. Ahora el precio en vivo viene del feed Chainlink y **el resultado se lee de la liquidación real**, eliminando ese error por completo.
 
-### 5. La Ventaja Sobrevive Fuera de Muestra (validación out-of-sample)
-Calibrando con los primeros ~20 días y midiendo en los últimos ~10 días que el modelo **nunca vio**, el winrate se mantiene: **5m 61.9% · 15m 61.8% · 1h 75.2%** sobre miles de ventanas no vistas. Bucket por bucket coincide (ej. 5m +4min: train 68.5% → test 71.6%). Esto descarta que la ventaja sea *data snooping*. Además, el límite inferior de **Wilson** mejora el winsrate fuera de muestra precisamente porque elimina los buckets marginales que no replican (15m 60.3%→61.8%, 1h 71.0%→75.2%).
+### 5. La ventaja sobrevive fuera de muestra
+Calibrando con los primeros ~20 días y midiendo en los últimos ~10 no vistos, el winrate se mantiene (5m ~61.9% · 15m ~61.8%). El Wilson LB mejora el winrate out-of-sample al eliminar los buckets que no replican.
 
-> Nota sobre número de muestras: los buckets que **sí se operan** tienen entre ~170 y ~6,900 muestras (no 15). Los de pocas muestras son las caídas profundas (0.3–1%), que ya quedan excluidas porque su probabilidad < 0.5. El Wilson LB es además **auto-regulante**: si un bucket tiene pocas muestras, su límite inferior cae por debajo de 0.5 y se excluye solo — esto es más robusto que fijar un número de días arbitrario.
-
-### 6. El Régimen Afecta de Forma Asimétrica (y NO como se esperaría)
-Midiendo el winrate del bucket operado de 5m según el **régimen previo (60 min)**:
-
-| Régimen previo (tendencia 60m) | n | Winrate |
-| :--- | ---: | ---: |
-| Rally fuerte (>+1.2%) | 112 | **0.768** |
-| Sube (+0.6…+1.2%) | 550 | 0.718 |
-| Plano (−0.6…+0.6%) | ~21k | ~0.60 |
-| Baja (−1.2…−0.6%) | 621 | **0.702** |
-| Baja fuerte (−2…−1.2%) | 77 | 0.688 |
-| Crash (<−2%) | 5 | (muestras insuficientes) |
-
-Por **volatilidad realizada previa**: vol baja 0.565 → media 0.626 → alta 0.699 → extrema 0.739 (monótono creciente).
-
-**Conclusiones (contraintuitivas, respaldadas por datos):**
-- La relación es en **U**: los movimientos fuertes en **cualquier** dirección dan más ventaja de reversión (mercado sobre-extendido que rebota). El centro plano es donde menos ventaja hay.
-- **Más volatilidad = MÁS edge**, no menos (refuta la hipótesis de que alta vol sea contexto peligroso).
-- El **rally alcista fuerte es el MEJOR régimen** (0.768). Por eso **no** conviene un filtro simétrico que pause en subidas: cortaría las mejores operaciones (la estrategia apuesta UP; una subida es viento a favor).
-- El filtro de caída se **relajó de −0.6% a −2%** a raíz de estos datos: como las caídas −0.6…−2% rinden ~0.70, pausar ahí era contraproducente. Ahora el filtro solo se activa en *free-fall* genuino (<−2%), funcionando como seguro de cola ante un bear sostenido que no está en la muestra (n=5 ahí, sin evidencia a favor ni en contra).
+### 6. El régimen afecta de forma asimétrica
+Más volatilidad previa = más edge de reversión (no menos). Por eso el filtro de caída se relajó a −2% (solo pausa en free-fall genuino); las caídas moderadas rinden ~70%.
 
 ---
 
-## Problemas Conocidos y Soluciones
+## Problemas Conocidos y Decisiones
 
-### Bug de Volumen Equivocado → Liquidez (Corregido)
-- **Problema**: `obtener_mercado` leía `event.volume24hr` (≈$10–20, casi vacío) que al ser truthy ocultaba el volumen real del mercado. Además el "volumen 24h" no tiene sentido en mercados de 5/15 min que se recrean cada ventana. Resultado: el filtro de $5,000 rechazaba casi todas las señales de 5m y 15m.
-- **Solución**: Se lee a nivel de **mercado** (`volumeNum`/`liquidityNum`) y el filtro ahora usa **liquidez** (profundidad del libro ≈ $9k–15k), que es la métrica correcta para slippage. Verificado contra la API: 5m liq≈$10k, 15m liq≈$13k, 1h liq≈$9k (todos pasan).
-- **Estado**: Corregido en los 4 bots (vía `cli_util.parse_mercado`).
+### Resolución por velas → liquidación real (Corregido)
+- **Antes**: el resultado se inferían comparando apertura/cierre de velas (Coinbase), con error vs Chainlink.
+- **Ahora**: se lee `outcomePrices` del mercado cerrado en Polymarket. 100% exacto.
 
-### Bug de Punto Flotante (Corregido)
-- **Problema**: Los cálculos de caída pueden tener errores de precisión de punto flotante (ej: 0.00050000000001 en lugar de 0.0005).
-- **Solución**: Se aplica `round(caida, 6)` antes de comparar con los límites del mapa de probabilidades.
-- **Estado**: Corregido en los 4 bots.
+### Precio aproximado (Coinbase) → Chainlink en vivo (Corregido)
+- **Antes**: el "precio a superar" y el precio en vivo usaban Coinbase (±$13–23 vs Chainlink).
+- **Ahora**: feed Chainlink de Polymarket (misma fuente que la resolución).
 
-### Mercado de 30 Minutos No Existe
-- **Problema**: Polymarket no ofrece mercados de 30 minutos para BTC.
-- **Solución**: Se eliminó el bot de 30 minutos. El sistema se quedó con 5m, 15m y 1h.
+### Hora en UTC → ET (Corregido)
+- **Antes**: la hora se mostraba en UTC y el slug de 1h hardcodeaba −4h (se rompía en invierno).
+- **Ahora**: `America/New_York` con DST automático; las ventanas se muestran en ET como Polymarket.
 
-### Bug de Precio $0.00 de Polymarket (Corregido)
-- **Problema**: Cuando Polymarket no devuelve datos reales para un mercado, el precio de la acción "UP" puede ser $0.00. El bot calculaba EV = Probabilidad - $0.00 = Probabilidad, generando falsas señales.
-- **Solución**: Se agregó un filtro que rechaza señales si el precio de Polymarket es menor a $0.01.
-- **Estado**: Corregido en los 3 bots.
+### Bots retirados (1h y 4h)
+- **4h**: Polymarket no publica ese mercado.
+- **1h**: retirado para concentrar el sistema en 5m/15m (resolución Chainlink, feed en vivo).
 
-### Mercado de 4 Horas - No Existe en Polymarket
-- **Problema**: Polymarket **no publica** mercados BTC up/down de 4 horas (el slug devuelve 0 eventos).
-- **Decisión**: Se **retiró** el bot de 4h del sistema. Solo quedan 5m, 15m y 1h, que sí tienen mercado real.
-- **Estado**: Resuelto (bot eliminado).
-
-### Bots con Mercado No Encontrado puntualmente
-- **Problema**: Algunos timeframes pueden no tener mercado activo en Polymarket en un instante dado.
-- **Solución**: El bot reporta "mercado no encontrado" y continúa monitoreando.
-- **Estado**: Comportamiento esperado. No afecta la validación de la estrategia.
+### Filtro por liquidez, bug de $0.00 y de punto flotante
+- Liquidez (`liquidityNum`) en vez de `volume24hr`; rechazo de precios < $0.01; `round(caida, 6)` antes de comparar buckets. Todos corregidos.
 
 ---
 
@@ -271,22 +217,19 @@ Por **volatilidad realizada previa**: vol baja 0.565 → media 0.626 → alta 0.
 ```bash
 python3 -u /home/penguin/Documentos/poly/master_bot.py
 ```
-Lanza los 3 bots simultáneamente y muestra su salida en tiempo real en una sola terminal.
+Lanza los 2 bots simultáneamente y muestra su salida en tiempo real.
 
 ### Opción 2: Bots Individuales
 ```bash
-# En terminales separadas:
-python3 -u /home/penguin/Documentos/poly/1_hora/paper_trading_bot.py
 python3 -u /home/penguin/Documentos/poly/15_minutos/paper_trading_bot_15m.py
 python3 -u /home/penguin/Documentos/poly/5_minutos/paper_trading_bot_5m.py
 ```
 
 ### Para detener
-Presionar `Ctrl + C` en la terminal del maestro (o en cada terminal individual).
+`Ctrl + C` (muestra el resumen de P&L de cada bot).
 
 ### Para revisar datos acumulados
 ```bash
-cat /home/penguin/Documentos/poly/1_hora/senales_1h.csv
 cat /home/penguin/Documentos/poly/15_minutos/senales_15m.csv
 cat /home/penguin/Documentos/poly/5_minutos/senales_5m.csv
 ```
@@ -299,63 +242,41 @@ cat /home/penguin/Documentos/poly/5_minutos/senales_5m.csv
 | :--- | :--- | :--- |
 | 5 Minutos | 6-8 horas | ~40-56 señales |
 | 15 Minutos | 12-16 horas | ~20-30 señales |
-| 1 Hora | 2-3 días | ~15-20 señales |
-
----
-
-## Próximos Pasos
-
-1. **Ejecutar validación**: Correr el sistema durante los tiempos recomendados.
-2. **Analizar resultados**: Revisar los CSVs para calcular la tasa de acierto real.
-3. **Comparar con histórica**: Si la tasa real se acerca a la probabilidad temporal estimada, la estrategia está validada.
-4. **Ajustar parámetros**: Si la tasa es significativamente menor, ajustar los umbrales de caída o el margen de EV.
-5. **Posible implementación con capital real**: Solo después de validación exitosa.
 
 ---
 
 ## Notas Técnicas
 
 ### Dependencias
-- Python 3.x
-- aiohttp (para requests asíncronos)
-- No requiere dependencias adicionales (usa solo librerías estándar + aiohttp)
+- Python 3.9+ (usa `zoneinfo`).
+- `aiohttp` (requests asíncronos + WebSocket).
+- Resto: librería estándar.
 
-### APIs Utilizadas
-- Binance API pública (sin autenticación requerida)
-- Polymarket Gamma API pública (sin autenticación requerida)
+### APIs Utilizadas (todas públicas, sin autenticación)
+- Polymarket WebSocket de precios Chainlink (`ws-live-data.polymarket.com`).
+- Polymarket Gamma API (eventos, liquidación) y CLOB (order book).
+- Coinbase Exchange API (histórico de calibración).
 
-### Persistencia de Datos
-- Los CSVs se abren en modo `append` ('a'), por lo que los datos se acumulan entre ejecuciones.
-- Los encabezados solo se escriben si el archivo no existe.
-- Ejecutar el bot múltiples veces NO sobrescribe los datos anteriores.
+### Persistencia
+- Los CSVs se abren en modo `append`: los datos se acumulan entre ejecuciones.
 
 ### Auto-calibración
-- Cada bot descarga 30 días de datos de Binance al iniciar.
-- Los parámetros se recalculan automáticamente cada 24 horas.
-- No hay parámetros estáticos ni hardcodeados (excepto los filtros de seguridad).
+- 30 días de histórico al iniciar; recálculo cada 24 horas en un hilo aparte (no corta el feed).
+- Sin parámetros mágicos hardcodeados salvo los filtros de seguridad.
 
 ---
 
 ## Historial de Desarrollo
 
-- **2026-06-03**: Creación del sistema completo.
-  - Análisis histórico de Binance (30 días) para 5m, 15m, 1h.
-  - Creación de bots de 5m, 15m, 1h con auto-calibración.
-  - Creación del bot maestro.
-  - Corrección del bug de punto flotante.
-  - Eliminación del bot de 30 minutos (no existe en Polymarket).
-  - Pruebas exitosas de todos los componentes.
-- **Actualización**: correcciones de robustez y realismo.
-  - Corrección del bug de volumen → filtro por **liquidez**.
-  - Salida CLI en español con iconos y P&L (🔴 señal · 🟢/🔴 resultado).
-  - Probabilidad **condicionada al tiempo** (corrige el look-ahead bias).
-  - Precio de entrada = **fill simulado por profundidad del CLOB (VWAP)**, no el punto medio ni solo el mejor ask. Modela el slippage real; solo lectura.
-  - Retiro del bot de 4 horas (sin mercado en Polymarket).
+- **2026-06-03**: Sistema inicial (5m, 15m, 1h) con calibración temporal, fill por VWAP, filtro por liquidez.
+- **2026-06-05**: Exactitud total con Polymarket.
+  - Precio en vivo y "precio a superar" desde el **feed de Chainlink** de Polymarket (antes Coinbase).
+  - Resolución y P&L desde la **liquidación real** de Polymarket (antes inferida con velas).
+  - Hora mostrada en **ET** (`America/New_York`, DST automático).
+  - Retiro del bot de **1 hora**; recalibración en hilo aparte para no cortar el feed.
 
 ---
 
 ## Contacto y Contexto
 
-Este sistema fue desarrollado como un proyecto de trading cuantitativo para mercados de predicción. La estrategia se basa en la **reversión a la media** (mean reversion), una de las estrategias estadísticamente más sólidas en mercados financieros de corto plazo.
-
-**Principio fundamental**: El mercado de Polymarket a veces sobre-reacciona a pequeñas fluctuaciones de precio, creando oportunidades donde la probabilidad implícita del mercado es menor que la probabilidad real calculada históricamente. El bot detecta estas discrepancias y las registra como señales de compra de alto valor esperado.
+Proyecto de trading cuantitativo para mercados de predicción. La estrategia es **reversión a la media** (mean reversion) sobre micro-caídas. El bot detecta cuando la probabilidad implícita del mercado es menor que la probabilidad real histórica (EV+) y registra esas señales, validándolas contra las **fuentes exactas de Polymarket**.

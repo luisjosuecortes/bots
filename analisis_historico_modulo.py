@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 _UA = {"User-Agent": "Mozilla/5.0"}
-_GRAN_COINBASE = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
+_GRAN_COINBASE = {"1m": 60, "5m": 300, "15m": 900}
 
 
 def wilson_lower_bound(wins, n, z=1.645):
@@ -32,7 +32,7 @@ def descargar_velas_binance(symbol="BTCUSDT", interval="1m", days=30):
     end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
     start_time = end_time - (days * 24 * 60 * 60 * 1000)
     
-    interval_ms = {"1m": 60000, "5m": 300000, "15m": 900000, "30m": 1800000, "1h": 3600000, "4h": 14400000}
+    interval_ms = {"1m": 60000, "5m": 300000, "15m": 900000}
     ms = interval_ms.get(interval, 60000)
     
     all_candles = []
@@ -113,8 +113,6 @@ def agrupar_por_ventana(all_candles, interval):
         window_ms = 900000
     elif interval == "30m":
         window_ms = 1800000
-    elif interval == "1h":
-        window_ms = 3600000
     elif interval == "4h":
         window_ms = 14400000
     else:
@@ -182,18 +180,6 @@ def calcular_mapa_probabilidades(windows_data, interval):
                 bucket = 0.01
             else:
                 bucket = None
-        elif interval == "1h":
-            # Rangos de 0.1% para 1 hora
-            if caida_pct <= 0.1:
-                bucket = 0.001
-            elif caida_pct <= 0.2:
-                bucket = 0.002
-            elif caida_pct <= 0.5:
-                bucket = 0.005
-            elif caida_pct <= 1.0:
-                bucket = 0.01
-            else:
-                bucket = None
         elif interval == "4h":
             # Rangos de 0.2% para 4 horas
             if caida_pct <= 0.2:
@@ -252,7 +238,6 @@ def ejecutar_analisis(interval="1m", days=30):
 _SUB_CONFIG = {
     "5m":  ("1m", 1, list(range(1, 5)),  5),
     "15m": ("1m", 1, list(range(1, 15)), 15),
-    "1h":  ("5m", 5, list(range(5, 60, 5)), 60),
 }
 
 
@@ -271,20 +256,16 @@ def _drop_bucket(interval, caida_pct):
         if caida_pct <= 0.5: return 0.005
         if caida_pct <= 1.0: return 0.01
         return None
-    if interval == "1h":
-        if caida_pct <= 0.1: return 0.001
-        if caida_pct <= 0.2: return 0.002
-        if caida_pct <= 0.5: return 0.005
-        if caida_pct <= 1.0: return 0.01
-        return None
     return None
 
 
 def ejecutar_analisis_temporal(interval="5m", days=30, source="binance"):
     """Descarga sub-velas finas y construye la tabla de probabilidad condicionada al tiempo.
 
-    `source` selecciona la fuente de precio: "binance" (BTC/USDT, para el bot de 1h) o
-    "coinbase" (BTC/USD, para 5m/15m, que es el par que usa la resolución por Chainlink).
+    `source` selecciona la fuente del HISTÓRICO de calibración: "coinbase" (BTC/USD,
+    el mismo par que la resolución por Chainlink de 5m/15m) o "binance" (BTC/USDT).
+    Nota: la calibración es solo para el MODELO de entrada; en vivo el precio y la
+    resolución vienen del feed Chainlink y de la liquidación real de Polymarket.
 
     Devuelve {elapsed_min: {drop_limit: prob}} solo con buckets que tengan muestras
     suficientes y ventaja estadística real (prob > 0.5).
@@ -379,7 +360,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("PRUEBA DEL MÓDULO DE ANÁLISIS TEMPORAL")
     print("=" * 60)
-    for interval in ["5m", "15m", "1h"]:
+    for interval in ["5m", "15m"]:
         print(f"\n--- {interval} ---")
         tabla = ejecutar_analisis_temporal(interval=interval, days=30)
         for cp in sorted(tabla):

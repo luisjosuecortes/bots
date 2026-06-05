@@ -7,13 +7,15 @@ from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from analisis_historico_modulo import ejecutar_analisis_temporal, probabilidad_temporal
-from cli_util import (init, aviso, ventana, senal, registrar_resultado, resumen_final,
+from cli_util import (init, aviso, ventana, senal, resumen_final,
                       parse_mercado, token_up, simular_fill_clob, verificar_oraculo,
-                      revalidar_fill, precio_frontera, tendencia_pct, precio_vivo, apertura_y_minimo)
+                      revalidar_fill, tendencia_pct, registrar_resultado_real,
+                      resultado_resuelto, FeedChainlink, a_et)
 
 TF = "15m"
-SOURCE = "coinbase"           # Coinbase BTC/USD: par USD = el de la resolución (Chainlink BTC/USD)
-FUENTE = "Chainlink BTC/USD ≈ Coinbase BTC/USD"
+SOURCE = "coinbase"           # solo para el filtro de régimen (tendencia 90m); el precio en
+                              # vivo y el strike vienen del feed Chainlink (igual que Polymarket)
+FUENTE = "Chainlink BTC/USD (feed en vivo de Polymarket)"
 TABLA = {}
 MIN_LIQUIDEZ = 5000.0
 TAMANO_ORDEN = 100.0       # unidades de UP que simulamos comprar (para medir slippage real del libro)
@@ -28,6 +30,7 @@ DIAS_HISTORICOS = 30
 REFRESH_HORAS = 24
 INTERVALO_CHEQUEO = 60
 VENTANA_MINUTOS = 15
+MAX_INTENTOS_RESOLUCION = 10   # reintentos para leer la liquidación real (Polymarket tarda unos s)
 
 
 def obtener_inicio_ventana():
@@ -75,7 +78,7 @@ async def main():
     CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "senales_15m.csv")
 
     init(TF, f"filtros: liquidez≥${MIN_LIQUIDEZ:,.0f} · orden {TAMANO_ORDEN:.0f}u · EV≥{MARGEN_EV_MINIMO*100:.0f}% · fee {FEE:.2f} · ventana {VENTANA_MINUTOS}m")
-    init(TF, f"fuente de precio: Coinbase BTC/USD (par USD = la resolución {FUENTE})")
+    init(TF, f"fuente de precio: {FUENTE} — misma que Polymarket")
 
     if not os.path.exists(CSV_FILE):
         with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
@@ -85,15 +88,23 @@ async def main():
             csv.writer(f).writerow([f"=== SESION: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} ==="])
 
     async with aiohttp.ClientSession() as session:
+        # Feed Chainlink BTC/USD en vivo (EXACTAMENTE la fuente de Polymarket).
+        feed = FeedChainlink()
+        await feed.conectar(session)
+        if await feed.esperar_datos():
+            init(TF, f"feed Chainlink conectado · BTC ${feed.precio_actual():,.2f}")
+        else:
+            aviso(TF, "feed Chainlink sin datos aún; reintentando en segundo plano")
+
         apertura = None
         minimo = None
         ventana_actual = None
         inicio_ventana = None
-        apertura_ant = None
-        cierre_ant = None
         senal_ant = False
         senal_precio_up = 0.0
+        senal_slug = None            # slug del mercado donde entramos (para leer su liquidación real)
         senal_ya_registrada = False
+        pendientes = []              # señales esperando la resolución REAL de Polymarket
         wins = 0
         losses = 0
         pnl_total = 0.0
@@ -105,45 +116,78 @@ async def main():
 
                 if (ahora - ultimo_refresh).total_seconds() >= REFRESH_HORAS * 3600:
                     init(TF, "re-calibrando…")
-                    TABLA = ejecutar_analisis_temporal(interval="15m", days=DIAS_HISTORICOS, source=SOURCE)
+                    # En un executor para NO bloquear el event loop (mantiene vivo el feed).
+                    TABLA = await asyncio.get_running_loop().run_in_executor(
+                        None, lambda: ejecutar_analisis_temporal(
+                            interval="15m", days=DIAS_HISTORICOS, source=SOURCE))
                     ultimo_refresh = ahora
 
                 inicio_ventana = obtener_inicio_ventana()
                 inicio_str = inicio_ventana.strftime("%Y-%m-%d %H:%M:%S")
                 fin_ventana = inicio_ventana + timedelta(minutes=VENTANA_MINUTOS)
 
-                precio_actual = await precio_vivo(session, SOURCE)
+                # --- Resolución EXACTA: leer la liquidación real de Polymarket ---
+                # Para cada señal cuya ventana ya cerró, consultamos el outcome real
+                # (['1','0']=UP, ['0','1']=DOWN). Reintentamos porque la liquidación
+                # tarda unos segundos tras el cierre.
+                aun_pendientes = []
+                for p in pendientes:
+                    if ahora < p["fin"]:
+                        aun_pendientes.append(p)
+                        continue
+                    res = await resultado_resuelto(session, p["slug"])
+                    if res is None:
+                        p["intentos"] += 1
+                        if p["intentos"] <= MAX_INTENTOS_RESOLUCION:
+                            aun_pendientes.append(p)
+                        else:
+                            aviso(TF, f"sin liquidación tras {p['intentos']} intentos: {p['slug']}")
+                        continue
+                    gano = (res == p["lado"])
+                    wins, losses, pnl_total, etiqueta = registrar_resultado_real(
+                        TF, gano, p["lado"], p["entrada"], wins, losses, pnl_total,
+                        detalle=f"({p['ventana']} · resolvió {res})")
+                    with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+                        csv.writer(f).writerow([''] * 12 + [etiqueta])
+                pendientes = aun_pendientes
+
+                # Precio en vivo = último tick de Chainlink (= "precio actual" de Polymarket).
+                precio_actual = feed.precio_actual()
                 if precio_actual is None:
                     await asyncio.sleep(INTERVALO_CHEQUEO)
                     continue
 
+                ts_inicio_ms = int(inicio_ventana.timestamp() * 1000)
+
                 if ventana_actual != inicio_str:
-                    # Cierre de la ventana anterior = precio EXACTO en la frontera
-                    # (apertura de la nueva ventana), determinista e idéntico para
-                    # todos los bots. Corrige el desfase del ticker en vivo.
-                    precio_real, minimo_real = await apertura_y_minimo(session, inicio_ventana, SOURCE)
-                    if precio_real is None:
-                        precio_real = await precio_frontera(session, inicio_ventana, SOURCE)
-                    cierre_ant = precio_real if precio_real else precio_actual
+                    # Nueva ventana: si la anterior tuvo señal, queda PENDIENTE de
+                    # leer su resolución real de Polymarket (arriba). No inferimos el
+                    # resultado con velas; lo tomamos de la liquidación oficial.
+                    if senal_ant and senal_slug:
+                        pendientes.append({"slug": senal_slug, "lado": "UP",
+                                           "entrada": senal_precio_up, "ventana": ventana_actual,
+                                           "fin": inicio_ventana, "intentos": 0})
 
-                    wins, losses, pnl_total, etiqueta = registrar_resultado(
-                        TF, apertura, cierre_ant, senal_ant, senal_precio_up, wins, losses, pnl_total)
-                    if etiqueta and senal_ant:
-                        with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
-                            csv.writer(f).writerow([''] * 12 + [etiqueta])
-
-                    apertura_ant = apertura
-                    apertura = precio_real if precio_real else precio_actual
-                    minimo = min(minimo_real, precio_actual) if minimo_real else precio_actual
+                    # PRECIO A SUPERAR (strike) EXACTO: primer tick de Chainlink en/ tras
+                    # la frontera de la ventana — idéntico al que muestra/usa Polymarket.
+                    strike = feed.strike_en(ts_inicio_ms)
+                    apertura = strike if strike else precio_actual
+                    minimo = feed.minimo_desde(ts_inicio_ms) or apertura
                     ventana_actual = inicio_str
                     senal_ant = False
+                    senal_slug = None
                     senal_ya_registrada = False
 
-                    extra = f" · cierre ant ${cierre_ant:,.2f}" if apertura_ant else ""
-                    ventana(TF, f"{inicio_ventana.strftime('%H:%M')}→{fin_ventana.strftime('%H:%M')} · apertura ${apertura:,.2f}{extra}")
+                    ini_et = a_et(inicio_ventana).strftime('%H:%M')
+                    fin_et = a_et(fin_ventana).strftime('%H:%M')
+                    ventana(TF, f"{ini_et}-{fin_et} ET · precio a superar ${apertura:,.2f} · actual ${precio_actual:,.2f}")
                 else:
-                    if precio_actual < minimo:
-                        minimo = precio_actual
+                    # Strike/mínimo siempre desde el feed (per-segundo, exacto).
+                    strike = feed.strike_en(ts_inicio_ms)
+                    if strike:
+                        apertura = strike
+                    mn = feed.minimo_desde(ts_inicio_ms)
+                    minimo = mn if mn is not None else min(minimo, precio_actual)
 
                 caida = (apertura - minimo) / apertura
                 caida_pct = caida * 100
@@ -196,6 +240,7 @@ async def main():
                                     slippage = rev["vwap"] - rev["mejor_ask"]
                                     senal_ant = True
                                     senal_precio_up = precio_entrada
+                                    senal_slug = generar_slug()  # mercado de esta ventana, para leer su liquidación real
                                     senal(TF, f"SEÑAL · +{int(elapsed_min)}min · caída {caida_pct:.2f}% · prob {prob*100:.0f}% · fill ${rev['vwap']:.3f} (mejor ${rev['mejor_ask']:.2f} +slip ${slippage:.3f}/{rev['niveles']}niv +fee {FEE:.2f}) · EV +{ev*100:.1f}% · liq ${liquidez:,.0f}")
                                     with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
                                         csv.writer(f).writerow([ahora.strftime("%Y-%m-%d %H:%M:%S"), inicio_str, f"{int(elapsed_min)}",
