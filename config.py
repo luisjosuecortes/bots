@@ -22,6 +22,16 @@ DEFECTOS = {
         "tamano_usdc": 5.0,   # USDC a gastar por orden real
         "tipo_orden": "FOK",  # FOK (todo o nada) | GTC (queda en el libro)
     },
+    "parametros": {
+        "5m": {
+            "MIN_PROB": 0.60,     # Probabilidad mínima para generar señal
+            "EV_MIN": 0.15,       # Edge value mínimo (prob - precio_fill - fee)
+        },
+        "15m": {
+            "MIN_PROB": 0.60,     # Probabilidad mínima para generar señal
+            "EV_MIN": 0.15,       # Edge value mínimo
+        },
+    },
 }
 
 
@@ -80,3 +90,39 @@ def wallet_lista(cfg):
     hace falta configurarlo a mano.
     """
     return hay_clave()
+
+
+def cargar_parametros(cfg, timeframe):
+    """Carga los parámetros actuales (MIN_PROB, EV_MIN) para un timeframe.
+
+    Args:
+        cfg: configuración cargada
+        timeframe: "5m" o "15m"
+
+    Returns:
+        (MIN_PROB, EV_MIN) como tuple de floats
+    """
+    try:
+        params = cfg.get("parametros", {}).get(timeframe, {})
+        return float(params.get("MIN_PROB", 0.60)), float(params.get("EV_MIN", 0.15))
+    except (ValueError, TypeError, KeyError):
+        return 0.60, 0.15
+
+
+def actualizar_parametros(cfg, timeframe, min_prob, ev_min):
+    """Actualiza los parámetros para un timeframe y guarda.
+
+    Args:
+        cfg: configuración cargada
+        timeframe: "5m" o "15m"
+        min_prob: nuevo MIN_PROB
+        ev_min: nuevo EV_MIN
+    """
+    if "parametros" not in cfg:
+        cfg["parametros"] = {"5m": {}, "15m": {}}
+    if timeframe not in cfg["parametros"]:
+        cfg["parametros"][timeframe] = {}
+
+    cfg["parametros"][timeframe]["MIN_PROB"] = float(min_prob)
+    cfg["parametros"][timeframe]["EV_MIN"] = float(ev_min)
+    guardar(cfg)

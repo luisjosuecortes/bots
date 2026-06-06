@@ -11,6 +11,7 @@ from cli_util import (init, aviso, ventana, senal, resumen_final,
                       parse_mercado, token_up, simular_fill_clob, verificar_oraculo,
                       revalidar_fill, tendencia_pct, registrar_resultado_real,
                       resultado_resuelto, intentar_orden_real, FeedChainlink, a_et)
+import config as config_module
 
 TF = "5m"
 SOURCE = "coinbase"          # solo para el filtro de régimen (tendencia 60m); el precio en
@@ -20,18 +21,20 @@ TABLA = {}
 MIN_LIQUIDEZ = 5000.0
 TAMANO_ORDEN = 100.0       # unidades de UP que simulamos comprar (para medir slippage real del libro)
 FEE = 0.01                 # colchón de comisiones (el slippage ya lo modela el VWAP del order book)
-MARGEN_EV_MINIMO = 0.05
-MIN_PROB = 0.52            # convicción mínima: la prob (Wilson LB) debe superar esto. Knob frecuencia↔convicción
 RETARDO_FILL_S = 0.5       # latencia simulada decisión→fill: re-lee el libro antes de "ejecutar" (orden límite)
 REGIMEN_LOOKBACK_MIN = 60  # ventana para medir el régimen (tendencia reciente)
 REGIMEN_MIN_PCT = -2.0     # solo pausa en free-fall REAL (<-2%/60m). Datos 30d: caídas -0.6..-2%
                            # ganan ~70%, así que el umbral es seguro de cola ante un bear sostenido
                            # fuera de muestra, no un filtro de edge in-sample.
-DIAS_HISTORICOS = 30
+DIAS_HISTORICOS = 21  # ventana de calibración de la tabla de probabilidades
 REFRESH_HORAS = 24
 INTERVALO_CHEQUEO = 30
 VENTANA_MINUTOS = 5
 MAX_INTENTOS_RESOLUCION = 20   # reintentos para leer la liquidación real (Polymarket tarda unos s)
+
+# Lee parámetros del config.json (no hardcodeados)
+CFG = config_module.cargar()
+MIN_PROB, MARGEN_EV_MINIMO = config_module.cargar_parametros(CFG, TF)
 
 
 def obtener_inicio_ventana():
@@ -86,7 +89,8 @@ async def main():
     if not os.path.exists(CSV_FILE):
         with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
             csv.writer(f).writerow(['Fecha/Hora', 'Ventana', 'Min transcurrido', 'Apertura', 'Minimo', 'Caida %',
-                                    'Prob', 'Ask UP', 'Volumen', 'Liquidez', 'EV', 'Accion', 'Resultado'])
+                                    'Prob', 'Ask UP', 'Volumen', 'Liquidez', 'EV', 'Accion', 'Resultado',
+                                    'Compra $', 'Acciones', 'P&L $'])
         with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
             w = csv.writer(f)
             w.writerow([])
@@ -149,11 +153,11 @@ async def main():
                             aviso(TF, f"sin liquidación tras {p['intentos']} intentos: {p['slug']}")
                         continue
                     gano = (res == p["lado"])
-                    wins, losses, pnl_total, etiqueta = registrar_resultado_real(
+                    wins, losses, pnl_total, etiqueta, pnl = registrar_resultado_real(
                         TF, gano, p["lado"], p["entrada"], wins, losses, pnl_total,
                         detalle=f"({p['ventana']} · resolvió {res})")
                     with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
-                        csv.writer(f).writerow([''] * 12 + [etiqueta])
+                        csv.writer(f).writerow([''] * 12 + [etiqueta, '', '', f"{pnl:+.2f}"])
                 pendientes = aun_pendientes
 
                 # Precio en vivo = último tick de Chainlink (= "precio actual" de Polymarket).
@@ -246,14 +250,16 @@ async def main():
                                     senal_ant = True
                                     senal_precio_up = precio_entrada
                                     senal_slug = generar_slug()  # mercado de esta ventana, para leer su liquidación real
-                                    senal(TF, f"SEÑAL · +{int(elapsed_min)}min · caída {caida_pct:.2f}% · prob {prob*100:.0f}% · fill ${rev['vwap']:.3f} (mejor ${rev['mejor_ask']:.2f} +slip ${slippage:.3f}/{rev['niveles']}niv +fee {FEE:.2f}) · EV +{ev*100:.1f}% · liq ${liquidez:,.0f}")
+                                    from cli_util import CAPITAL_SIMULADO, acciones_simuladas
+                                    acc_sim = acciones_simuladas(precio_entrada)
+                                    senal(TF, f"SEÑAL · +{int(elapsed_min)}min · caída {caida_pct:.2f}% · prob {prob*100:.0f}% · fill ${rev['vwap']:.3f} (mejor ${rev['mejor_ask']:.2f} +slip ${slippage:.3f}/{rev['niveles']}niv +fee {FEE:.2f}) · EV +{ev*100:.1f}% · liq ${liquidez:,.0f} · compra sim ${CAPITAL_SIMULADO:.2f} → {acc_sim:.2f} acc")
                                     # En modo REAL coloca la compra real (no hace nada en paper).
                                     intentar_orden_real(TF, mercado["token_id"], precio_entrada)
                                     with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
                                         csv.writer(f).writerow([ahora.strftime("%Y-%m-%d %H:%M:%S"), inicio_str, f"{int(elapsed_min)}",
                                             f"{apertura:,.2f}", f"{minimo:,.2f}", f"{caida_pct:.2f}%",
                                             f"{prob*100:.1f}%", f"{precio_entrada:.3f}", f"{volumen:,.0f}", f"{liquidez:,.0f}",
-                                            f"+{ev*100:.1f}%", "COMPRAR UP", ""])
+                                            f"+{ev*100:.1f}%", "COMPRAR UP", "", f"{CAPITAL_SIMULADO:.2f}", f"{acc_sim:.2f}", ""])
 
                 await asyncio.sleep(INTERVALO_CHEQUEO)
 

@@ -308,6 +308,7 @@ def lanzar(cfg):
     bots = ["5m", "15m"] if cfg["bots"] == "ambos" else [cfg["bots"]]
     modo = cfg["modo"]
 
+    # Confirmación en modo real (los bots calibran su propia tabla al arrancar).
     limpiar()
     cabecera()
     if modo == "real" and not _confirmar_real(cfg):
@@ -326,7 +327,7 @@ def lanzar(cfg):
     if real_activo:
         orden_txt = f"${cfg['wallet']['tamano_usdc']:.2f} USDC por señal"
         print(f"  {c('orden', GRIS):<8} {c(orden_txt, CIAN)}")
-    print(f"  {c('nota', GRIS):<8} cada bot auto-calibra al iniciar (~30-60s)")
+    print(f"  {c('nota', GRIS):<8} cada bot calibra su tabla (~1 min) al arrancar")
     print(f"  {c('ctrl-c', GRIS):<8} detiene todos los bots")
     print()
 

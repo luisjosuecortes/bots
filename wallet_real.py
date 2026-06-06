@@ -71,12 +71,13 @@ def _importar():
     """Importa py-clob-client-v2 de forma perezosa; WalletError si no está."""
     try:
         from py_clob_client_v2 import (ClobClient, OrderArgs, OrderType, Side,
-                                        PartialCreateOrderOptions)
+                                        PartialCreateOrderOptions, MarketOrderArgs)
     except ImportError as e:
         raise WalletError(
             "falta py-clob-client-v2 — instálalo con "
             "'pip install py-clob-client-v2 py-builder-relayer-client'") from e
-    return ClobClient, OrderArgs, OrderType, Side, PartialCreateOrderOptions
+    return (ClobClient, OrderArgs, OrderType, Side,
+            PartialCreateOrderOptions, MarketOrderArgs)
 
 
 def _derivar_funder(clave, sig):
@@ -112,7 +113,7 @@ def crear_cliente(cfg):
     if _cliente is not None:
         return _cliente
 
-    ClobClient, _, _, _, _ = _importar()
+    ClobClient, _, _, _, _, _ = _importar()
     clave = config.clave_privada()
     if not clave:
         raise WalletError("no hay clave privada (configúrala en Ajustes o exporta POLY_PK)")
@@ -137,24 +138,44 @@ def crear_cliente(cfg):
     return cli
 
 
-def comprar_up(cfg, token_id, precio, tamano_shares):
-    """Coloca una orden REAL de compra de UP. Devuelve la respuesta del CLOB.
+def comprar_up(cfg, token_id, precio, tamano_usdc):
+    """Coloca una orden REAL de compra de UP por 'tamano_usdc' dólares de colateral.
 
-    'precio'         : límite por share (0-1).
-    'tamano_shares'  : número de shares a comprar.
+    'precio'       : precio límite por share (0-1) = el PEOR precio aceptable.
+    'tamano_usdc'  : dólares (USDC) a gastar en la compra.
+
+    FOK se envía como ORDEN DE MERCADO (create_market_order): Polymarket exige que
+    el importe en USDC sea el 'maker' (máx 2 decimales) y las shares el 'taker'
+    (máx 4 decimales). Si un FOK se construye por la vía de orden límite, esos
+    decimales se invierten (USDC con 4) y el CLOB lo rechaza con
+    'invalid amounts ... maker amount supports a max accuracy of 2 decimals'.
+    GTC se deja como orden límite normal en el libro (expresada en nº de shares).
+
     Lanza WalletError ante cualquier problema (config, conexión o rechazo).
     """
-    _, OrderArgs, OrderType, Side, PartialCreateOrderOptions = _importar()
+    (_, OrderArgs, OrderType, Side,
+     PartialCreateOrderOptions, MarketOrderArgs) = _importar()
     cli = crear_cliente(cfg)
     tipo = str(cfg["wallet"].get("tipo_orden", "FOK")).upper()
-    order_type = OrderType.GTC if tipo == "GTC" else OrderType.FOK
+    precio = round(float(precio), 4)
     try:
         tick = cli.get_tick_size(token_id)
         neg_risk = cli.get_neg_risk(token_id)
         opciones = PartialCreateOrderOptions(tick_size=str(tick), neg_risk=neg_risk)
-        orden = OrderArgs(token_id=token_id, price=round(float(precio), 4),
-                          size=float(tamano_shares), side=Side.BUY)
-        return cli.create_and_post_order(orden, options=opciones, order_type=order_type)
+        if tipo == "GTC":
+            # Orden límite que queda en el libro: se expresa por nº de shares.
+            shares = float(tamano_usdc) / precio if precio > 0 else 0.0
+            orden = OrderArgs(token_id=token_id, price=precio,
+                              size=shares, side=Side.BUY)
+            return cli.create_and_post_order(
+                orden, options=opciones, order_type=OrderType.GTC)
+        # FOK = orden de mercado: se expresa por IMPORTE en USDC (maker, 2 decimales).
+        orden = MarketOrderArgs(token_id=token_id,
+                                amount=round(float(tamano_usdc), 2),
+                                side=Side.BUY, price=precio,
+                                order_type=OrderType.FOK)
+        return cli.create_and_post_market_order(
+            orden, options=opciones, order_type=OrderType.FOK)
     except WalletError:
         raise
     except Exception as e:

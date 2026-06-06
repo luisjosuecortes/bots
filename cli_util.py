@@ -148,7 +148,18 @@ def senal(tf, msg):
 
 
 def resultado(tf, gano, msg):
-    _p("🟢" if gano else "🔴", tf, msg)
+    _p("🟢" if gano else "❌", tf, msg)
+
+
+# Capital simulado por operación en paper trading: cada compra "gasta" este
+# importe en USDC (compramos $1 de acciones UP al precio de entrada). Así cada
+# apuesta arriesga lo mismo y el P&L sale directamente en dólares.
+CAPITAL_SIMULADO = 1.0
+
+
+def acciones_simuladas(precio_entrada, capital=CAPITAL_SIMULADO):
+    """Acciones UP que compra un capital fijo al precio de entrada."""
+    return capital / precio_entrada if precio_entrada > 0 else 0.0
 
 
 def resumen_final(tf, wins, losses, pnl_total):
@@ -159,33 +170,40 @@ def resumen_final(tf, wins, losses, pnl_total):
     tasa = wins / total * 100
     icono = "🟢" if pnl_total >= 0 else "🔴"
     estado = "GANANCIA" if pnl_total >= 0 else "PÉRDIDA"
-    _p(icono, tf, f"RESUMEN  {total} señales · {wins}W/{losses}L ({tasa:.0f}%) · {estado} neta {pnl_total:+.2f} u")
+    invertido = total * CAPITAL_SIMULADO
+    roi = pnl_total / invertido * 100 if invertido else 0
+    _p(icono, tf, f"RESUMEN  {total} señales · {wins}W/{losses}L ({tasa:.0f}%) · "
+                  f"{estado} neta ${pnl_total:+.2f} sobre ${invertido:.2f} invertidos ({roi:+.1f}% ROI)")
 
 
 def registrar_resultado_real(tf, gano, lado, precio_entrada, wins, losses,
-                             pnl_total, detalle=""):
+                             pnl_total, detalle="", capital=CAPITAL_SIMULADO):
     """Actualiza contadores y P&L usando el resultado REAL de Polymarket.
 
     'gano' viene de la LIQUIDACIÓN real del mercado (no se infiere con velas).
-    P&L en unidades: si gana paga 1.0 (beneficio 1-entrada); si pierde se pierde
-    lo pagado (-entrada). Devuelve (wins, losses, pnl_total, etiqueta).
+    Simula una compra de `capital` USDC: compra `capital/entrada` acciones UP.
+    Si gana, cada acción paga 1.0 (beneficio capital/entrada - capital); si
+    pierde, se pierde lo invertido (-capital). Devuelve (wins, losses,
+    pnl_total, etiqueta).
     """
+    acciones = acciones_simuladas(precio_entrada, capital)
     if gano:
         wins += 1
-        pnl = 1.0 - precio_entrada
+        pnl = acciones * 1.0 - capital
         etiqueta = "WIN"
         texto = "GANÓ"
     else:
         losses += 1
-        pnl = -precio_entrada
+        pnl = -capital
         etiqueta = "LOSS"
         texto = "PERDIÓ"
     pnl_total += pnl
     total = wins + losses
     tasa = wins / total * 100 if total else 0
-    resultado(tf, gano, f"{texto} {lado} {detalle} · aciertos {wins}/{total} "
-                        f"({tasa:.0f}%) · P&L {pnl:+.2f} (acum {pnl_total:+.2f})")
-    return wins, losses, pnl_total, etiqueta
+    resultado(tf, gano, f"{texto} {lado} {detalle} · {acciones:.2f} acc @ ${precio_entrada:.3f} "
+                        f"(${capital:.2f}) · aciertos {wins}/{total} "
+                        f"({tasa:.0f}%) · P&L ${pnl:+.2f} (acum ${pnl_total:+.2f})")
+    return wins, losses, pnl_total, etiqueta, pnl
 
 
 def intentar_orden_real(tf, token_id, precio):
@@ -210,12 +228,19 @@ def intentar_orden_real(tf, token_id, precio):
         return False
 
     tamano_usdc = float(cfg["wallet"].get("tamano_usdc", 5.0))
-    shares = tamano_usdc / precio if precio > 0 else 0.0
-    if shares <= 0:
+    # Monto mínimo del CLOB: $1.0. La orden se envía POR IMPORTE en USDC (orden de
+    # mercado FOK), así que basta con asegurar que el importe sea >= $1.0.
+    monto_minimo = 1.0
+    if tamano_usdc < monto_minimo:
+        aviso(tf, f"tamaño de orden ${tamano_usdc:.4f} < mínimo del CLOB ${monto_minimo:.2f}; ajustando a ${monto_minimo:.2f}")
+        tamano_usdc = monto_minimo
+    tamano_usdc = round(tamano_usdc, 2)  # USDC con 2 decimales (lo exige el CLOB)
+    if precio <= 0:
         return False
+    shares_aprox = tamano_usdc / precio   # solo para mostrar en el log
     try:
-        resp = wallet_real.comprar_up(cfg, token_id, precio, shares)
-        senal(tf, f"💰 ORDEN REAL · {shares:.1f} shares @ ${precio:.3f} (~${tamano_usdc:.2f}) · {resp}")
+        resp = wallet_real.comprar_up(cfg, token_id, precio, tamano_usdc)
+        senal(tf, f"💰 ORDEN REAL · ~{shares_aprox:.1f} shares @ ${precio:.3f} (${tamano_usdc:.2f}) · {resp}")
         return True
     except wallet_real.WalletError as e:
         aviso(tf, f"modo real: no se colocó la orden ({e}); queda solo como señal")

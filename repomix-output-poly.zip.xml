@@ -1,0 +1,2412 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+The content has been processed where line numbers have been added.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Line numbers have been added to the beginning of each line
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+poly/
+  .commandcode/
+    taste/
+      taste.md
+  1_hora/
+    analisis_historico.py
+    paper_trading_bot.py
+    senales_1h.csv
+  15_minutos/
+    paper_trading_bot_15m.py
+    senales_15m.csv
+  5_minutos/
+    analisis_historico_5m.py
+    paper_trading_bot_5m.py
+    senales_5m.csv
+  analisis_historico_modulo.py
+  bot_escucha.py
+  cli_util.py
+  COMO_FUNCIONA.md
+  master_bot.py
+  README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="poly/.commandcode/taste/taste.md">
+ 1: # Taste (Continuously Learned by [CommandCode][cmd])
+ 2: 
+ 3: [cmd]: https://commandcode.ai/
+ 4: 
+ 5: # Communication
+ 6: - Prefer concise, short responses over lengthy detailed explanations. Confidence: 0.70
+ 7: - Respond in Spanish (user communicates entirely in Spanish). Confidence: 0.90
+ 8: - Provide rigorous, technically precise corrections when user presents their understanding. Confidence: 0.75
+ 9: 
+10: # Code Style
+11: - Write code in Spanish: use Spanish variable names, comments, and labels. Keep code simple. Confidence: 0.85
+12: - Do not over-engineer solutions: avoid adding multiple fallback mechanisms, extra dependencies, or complex retry logic when something fails. Keep it minimal and direct. Confidence: 0.80
+13: - Create a single, unified script that integrates both Binance (for real price data) and Polymarket (for market probabilities). Don't create separate scripts for each data source. Confidence: 0.75
+14: 
+15: # Strategy
+16: - Focus the bot on 1-hour (short-term) markets only, not long-term markets. Confidence: 0.85
+17: - Polymarket 1-hour BTC markets are always active (rolling hourly). Use actual naming conventions like "BTC Up or Down" / "Bitcoin Up or Down" with time slots to find them, not generic filters. Confidence: 0.75
+18: 
+19: # Workflow
+20: - Execute tasks directly (save files, run code) rather than just providing instructions or code snippets for the user to copy-paste. When user requests automation, provide fully automatic solutions without manual steps. Confidence: 0.85
+21: - When working with APIs, check official documentation and research online first before making endpoint calls. Do not guess at API endpoints or parameters. Confidence: 0.80
+</file>
+
+<file path="poly/1_hora/analisis_historico.py">
+ 1: import urllib.request
+ 2: import json
+ 3: import time
+ 4: from datetime import datetime, timezone
+ 5: from collections import defaultdict
+ 6: 
+ 7: print("🚀 Iniciando análisis granular de datos históricos de Binance (1 hora, 30 días)...")
+ 8: 
+ 9: symbol = "BTCUSDT"
+10: interval = "1m"
+11: limit = 1000
+12: days = 30
+13: end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
+14: start_time = end_time - (days * 24 * 60 * 60 * 1000)
+15: 
+16: all_candles = []
+17: current_start = start_time
+18: 
+19: while current_start < end_time:
+20:     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}&startTime={current_start}"
+21:     try:
+22:         with urllib.request.urlopen(url) as response:
+23:             data = json.loads(response.read().decode())
+24:             if not data:
+25:                 break
+26:             all_candles.extend(data)
+27:             current_start = data[-1][0] + 60000
+28:             time.sleep(0.1)
+29:     except Exception:
+30:         break
+31: 
+32: print(f"✅ Descarga completada. Total de velas: {len(all_candles)}")
+33: 
+34: hours_data = {}
+35: for candle in all_candles:
+36:     open_time_ms = candle[0]
+37:     open_price = float(candle[1])
+38:     low_price = float(candle[3])
+39:     close_price = float(candle[4])
+40:     
+41:     hour_key = (open_time_ms // (60 * 60 * 1000)) * (60 * 60 * 1000)
+42:     
+43:     if hour_key not in hours_data:
+44:         hours_data[hour_key] = {'open': open_price, 'low': low_price, 'close': close_price}
+45:     else:
+46:         if low_price < hours_data[hour_key]['low']:
+47:             hours_data[hour_key]['low'] = low_price
+48:         hours_data[hour_key]['close'] = close_price
+49: 
+50: buckets = defaultdict(lambda: {'total': 0, 'up_wins': 0})
+51: 
+52: for hour_key, data in hours_data.items():
+53:     open_p = data['open']
+54:     low_p = data['low']
+55:     close_p = data['close']
+56:     
+57:     caida = (open_p - low_p) / open_p
+58:     caida_pct = caida * 100
+59:     
+60:     if caida_pct <= 0.1:
+61:         bucket = "0.001" # Representa <= 0.1%
+62:     elif caida_pct <= 0.2:
+63:         bucket = "0.002" # Representa <= 0.2%
+64:     else:
+65:         bucket = ">0.002"
+66:         
+67:     buckets[bucket]['total'] += 1
+68:     if close_p >= open_p:
+69:         buckets[bucket]['up_wins'] += 1
+70: 
+71: print("\n" + "="*60)
+72: print("📊 MAPA DE PROBABILIDADES HISTÓRICAS (1 HORA)")
+73: print("="*60)
+74: 
+75: mapa_para_bot = {}
+76: for bucket in ["0.001", "0.002"]:
+77:     if bucket in buckets and buckets[bucket]['total'] >= 15:
+78:         prob = (buckets[bucket]['up_wins'] / buckets[bucket]['total'])
+79:         mapa_para_bot[float(bucket)] = round(prob, 3)
+80:         print(f"Caída <= {float(bucket)*100:.1f}%: Muestras={buckets[bucket]['total']}, Prob. UP = {prob*100:.1f}%")
+81: 
+82: print("\n" + "="*60)
+83: print("📋 COPIA ESTE DICCIONARIO EN TU BOT:")
+84: print("MAPA_PROBABILIDADES = {")
+85: for k, v in sorted(mapa_para_bot.items()):
+86:     print(f"    {k}: {v},  # Caída <= {k*100:.1f}% -> {v*100:.1f}% prob. UP")
+87: print("}")
+88: print("="*60)
+</file>
+
+<file path="poly/1_hora/paper_trading_bot.py">
+  1: import asyncio
+  2: import aiohttp
+  3: import csv
+  4: import os
+  5: import sys
+  6: from datetime import datetime, timezone, timedelta
+  7: 
+  8: sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+  9: from analisis_historico_modulo import ejecutar_analisis_temporal, probabilidad_temporal
+ 10: from cli_util import (init, aviso, ventana, senal, registrar_resultado, resumen_final,
+ 11:                       parse_mercado, token_up, simular_fill_clob, precio_frontera, tendencia_pct,
+ 12:                       precio_vivo, apertura_y_minimo)
+ 13: 
+ 14: TF = "1h"
+ 15: SOURCE = "binance"           # el mercado 1h SE RESUELVE con Binance BTC/USDT: usamos la misma
+ 16: FUENTE = "Binance BTC/USDT (vela 1H)"
+ 17: TABLA = {}
+ 18: MIN_LIQUIDEZ = 5000.0
+ 19: TAMANO_ORDEN = 100.0         # unidades de UP que simulamos comprar (para medir slippage real del libro)
+ 20: MARGEN_EV_MINIMO = 0.05
+ 21: FEE = 0.01                   # colchón de comisiones (el slippage ya lo modela el VWAP del order book)
+ 22: REGIMEN_LOOKBACK_MIN = 360   # 6h de tendencia para el régimen
+ 23: REGIMEN_MIN_PCT = -2.0       # si BTC cayó más que esto en el lookback, NO operar (caída libre)
+ 24: DIAS_HISTORICOS = 30
+ 25: REFRESH_HORAS = 24
+ 26: INTERVALO_CHEQUEO = 60
+ 27: 
+ 28: 
+ 29: def obtener_inicio_ventana():
+ 30:     ahora = datetime.now(timezone.utc)
+ 31:     return ahora.replace(minute=0, second=0, microsecond=0)
+ 32: 
+ 33: 
+ 34: def generar_slug():
+ 35:     ahora_et = datetime.now(timezone.utc) - timedelta(hours=4)
+ 36:     meses = ["january", "february", "march", "april", "may", "june",
+ 37:              "july", "august", "september", "october", "november", "december"]
+ 38:     mes = meses[ahora_et.month - 1]
+ 39:     dia = ahora_et.day
+ 40:     anio = ahora_et.year
+ 41:     hora = ahora_et.hour
+ 42:     sufijo = "am" if hora < 12 else "pm"
+ 43:     hora_12 = hora if 1 <= hora <= 12 else abs(hora - 12)
+ 44:     return f"bitcoin-up-or-down-{mes}-{dia}-{anio}-{hora_12}{sufijo}-et"
+ 45: 
+ 46: 
+ 47: async def obtener_mercado(session):
+ 48:     """Datos del mercado simulando el fill REAL de una orden de TAMANO_ORDEN (VWAP del libro)."""
+ 49:     try:
+ 50:         slug = generar_slug()
+ 51:         url = f"https://gamma-api.polymarket.com/events?slug={slug}"
+ 52:         async with session.get(url) as resp:
+ 53:             data = await resp.json()
+ 54:         if not data:
+ 55:             return None
+ 56:         event = data[0]
+ 57:         _, volumen, liquidez = parse_mercado(event)
+ 58:         vwap, llenado, completo, niveles, mejor_ask = await simular_fill_clob(
+ 59:             session, token_up(event), TAMANO_ORDEN)
+ 60:         return {"vwap": vwap, "llenado": llenado, "completo": completo,
+ 61:                 "niveles": niveles, "mejor_ask": mejor_ask,
+ 62:                 "volumen": volumen, "liquidez": liquidez}
+ 63:     except Exception:
+ 64:         return None
+ 65: 
+ 66: 
+ 67: async def main():
+ 68:     global TABLA
+ 69: 
+ 70:     init(TF, "calibrando 30 días (probabilidad por minuto)…")
+ 71:     TABLA = ejecutar_analisis_temporal(interval="1h", days=DIAS_HISTORICOS, source=SOURCE)
+ 72: 
+ 73:     CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "senales_1h.csv")
+ 74: 
+ 75:     init(TF, f"filtros: liquidez≥${MIN_LIQUIDEZ:,.0f} · orden {TAMANO_ORDEN:.0f}u · EV≥{MARGEN_EV_MINIMO*100:.0f}% · fee {FEE:.2f} · ventana 1h")
+ 76:     init(TF, f"fuente de resolución: {FUENTE} (coincide con nuestra calibración)")
+ 77: 
+ 78:     if not os.path.exists(CSV_FILE):
+ 79:         with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
+ 80:             csv.writer(f).writerow(['Fecha/Hora', 'Ventana', 'Min transcurrido', 'Apertura', 'Minimo', 'Caida %',
+ 81:                                     'Prob', 'Ask UP', 'Volumen', 'Liquidez', 'EV', 'Accion', 'Resultado'])
+ 82:         with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+ 83:             csv.writer(f).writerow([f"=== SESION: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} ==="])
+ 84: 
+ 85:     async with aiohttp.ClientSession() as session:
+ 86:         apertura = None
+ 87:         minimo = None
+ 88:         ventana_actual = None
+ 89:         inicio_ventana = None
+ 90:         apertura_ant = None
+ 91:         cierre_ant = None
+ 92:         senal_ant = False
+ 93:         senal_precio_up = 0.0
+ 94:         senal_ya_registrada = False
+ 95:         wins = 0
+ 96:         losses = 0
+ 97:         pnl_total = 0.0
+ 98:         ultimo_refresh = datetime.now(timezone.utc)
+ 99: 
+100:         while True:
+101:             try:
+102:                 ahora = datetime.now(timezone.utc)
+103: 
+104:                 if (ahora - ultimo_refresh).total_seconds() >= REFRESH_HORAS * 3600:
+105:                     init(TF, "re-calibrando…")
+106:                     TABLA = ejecutar_analisis_temporal(interval="1h", days=DIAS_HISTORICOS, source=SOURCE)
+107:                     ultimo_refresh = ahora
+108: 
+109:                 inicio_ventana = obtener_inicio_ventana()
+110:                 inicio_str = inicio_ventana.strftime("%Y-%m-%d %H:%M:%S")
+111:                 fin_ventana = inicio_ventana + timedelta(hours=1)
+112: 
+113:                 precio_actual = await precio_vivo(session, SOURCE)
+114:                 if precio_actual is None:
+115:                     await asyncio.sleep(INTERVALO_CHEQUEO)
+116:                     continue
+117: 
+118:                 if ventana_actual != inicio_str:
+119:                     # Cierre de la ventana anterior = precio EXACTO en la frontera
+120:                     # (apertura de la nueva ventana), determinista e idéntico para
+121:                     # todos los bots. Corrige el desfase del ticker en vivo.
+122:                     precio_real, minimo_real = await apertura_y_minimo(session, inicio_ventana, SOURCE)
+123:                     if precio_real is None:
+124:                         precio_real = await precio_frontera(session, inicio_ventana, SOURCE)
+125:                     cierre_ant = precio_real if precio_real else precio_actual
+126: 
+127:                     wins, losses, pnl_total, etiqueta = registrar_resultado(
+128:                         TF, apertura_ant, cierre_ant, senal_ant, senal_precio_up, wins, losses, pnl_total)
+129:                     if etiqueta and senal_ant:
+130:                         with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+131:                             csv.writer(f).writerow([''] * 12 + [etiqueta])
+132: 
+133:                     apertura_ant = apertura
+134:                     apertura = precio_real if precio_real else precio_actual
+135:                     minimo = min(minimo_real, precio_actual) if minimo_real else precio_actual
+136:                     ventana_actual = inicio_str
+137:                     senal_ant = False
+138:                     senal_ya_registrada = False
+139: 
+140:                     extra = f" · cierre ant ${cierre_ant:,.2f}" if apertura_ant else ""
+141:                     ventana(TF, f"{inicio_ventana.strftime('%H:%M')}→{fin_ventana.strftime('%H:%M')} · apertura ${apertura:,.2f}{extra}")
+142:                 else:
+143:                     if precio_actual < minimo:
+144:                         minimo = precio_actual
+145: 
+146:                 caida = (apertura - minimo) / apertura
+147:                 caida_pct = caida * 100
+148:                 elapsed_min = (ahora - inicio_ventana).total_seconds() / 60
+149: 
+150:                 if ahora.minute >= 55:
+151:                     await asyncio.sleep(INTERVALO_CHEQUEO)
+152:                     continue
+153: 
+154:                 prob = probabilidad_temporal(TABLA, "1h", elapsed_min, caida_pct)
+155: 
+156:                 if prob > 0 and not senal_ya_registrada:
+157:                     tend = await tendencia_pct(session, REGIMEN_LOOKBACK_MIN, SOURCE)
+158:                     if tend < REGIMEN_MIN_PCT:
+159:                         aviso(TF, f"régimen bajista ({tend:+.2f}% en {REGIMEN_LOOKBACK_MIN}m) · sin operar")
+160:                         senal_ya_registrada = True
+161:                         await asyncio.sleep(INTERVALO_CHEQUEO)
+162:                         continue
+163:                     mercado = await obtener_mercado(session)
+164:                     if mercado:
+165:                         vwap = mercado["vwap"]
+166:                         completo = mercado["completo"]
+167:                         mejor_ask = mercado["mejor_ask"]
+168:                         niveles = mercado["niveles"]
+169:                         liquidez = mercado["liquidez"]
+170:                         volumen = mercado["volumen"]
+171:                         if vwap >= 0.01 and liquidez >= MIN_LIQUIDEZ and completo:
+172:                             precio_entrada = vwap + FEE
+173:                             slippage = vwap - mejor_ask
+174:                             ev = prob - precio_entrada
+175:                             if ev >= MARGEN_EV_MINIMO:
+176:                                 senal_ant = True
+177:                                 senal_precio_up = precio_entrada
+178:                                 senal_ya_registrada = True
+179:                                 senal(TF, f"SEÑAL · +{int(elapsed_min)}min · caída {caida_pct:.2f}% · prob {prob*100:.0f}% · fill ${vwap:.3f} (mejor ${mejor_ask:.2f} +slip ${slippage:.3f}/{niveles}niv +fee {FEE:.2f}) · EV +{ev*100:.1f}% · liq ${liquidez:,.0f}")
+180:                                 with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+181:                                     csv.writer(f).writerow([ahora.strftime("%Y-%m-%d %H:%M:%S"), inicio_str, f"{int(elapsed_min)}",
+182:                                         f"{apertura:,.2f}", f"{minimo:,.2f}", f"{caida_pct:.2f}%",
+183:                                         f"{prob*100:.1f}%", f"{precio_entrada:.3f}", f"{volumen:,.0f}", f"{liquidez:,.0f}",
+184:                                         f"+{ev*100:.1f}%", "COMPRAR UP", ""])
+185: 
+186:                 await asyncio.sleep(INTERVALO_CHEQUEO)
+187: 
+188:             except KeyboardInterrupt:
+189:                 resumen_final(TF, wins, losses, pnl_total)
+190:                 break
+191:             except Exception as e:
+192:                 aviso(TF, f"error: {e}")
+193:                 await asyncio.sleep(INTERVALO_CHEQUEO)
+194: 
+195: 
+196: if __name__ == "__main__":
+197:     asyncio.run(main())
+</file>
+
+<file path="poly/1_hora/senales_1h.csv">
+1: Fecha/Hora,Ventana,Min transcurrido,Apertura,Minimo,Caida %,Prob,Ask UP,Volumen,Liquidez,EV,Accion,Resultado
+2: === SESION: 2026-06-04 19:43:08 ===
+</file>
+
+<file path="poly/15_minutos/paper_trading_bot_15m.py">
+  1: import asyncio
+  2: import aiohttp
+  3: import csv
+  4: import os
+  5: import sys
+  6: from datetime import datetime, timezone, timedelta
+  7: 
+  8: sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+  9: from analisis_historico_modulo import ejecutar_analisis_temporal, probabilidad_temporal
+ 10: from cli_util import (init, aviso, ventana, senal, registrar_resultado, resumen_final,
+ 11:                       parse_mercado, token_up, simular_fill_clob, precio_frontera, tendencia_pct,
+ 12:                       precio_vivo, apertura_y_minimo)
+ 13: 
+ 14: TF = "15m"
+ 15: SOURCE = "coinbase"           # Coinbase BTC/USD: par USD = el de la resolución (Chainlink BTC/USD)
+ 16: FUENTE = "Chainlink BTC/USD ≈ Coinbase BTC/USD"
+ 17: TABLA = {}
+ 18: MIN_LIQUIDEZ = 5000.0
+ 19: TAMANO_ORDEN = 100.0       # unidades de UP que simulamos comprar (para medir slippage real del libro)
+ 20: MARGEN_EV_MINIMO = 0.05
+ 21: FEE = 0.01                 # colchón de comisiones (el slippage ya lo modela el VWAP del order book)
+ 22: REGIMEN_LOOKBACK_MIN = 90  # ventana para medir el régimen (tendencia reciente)
+ 23: REGIMEN_MIN_PCT = -0.80    # si BTC cayó más que esto en el lookback, NO operar (caída libre)
+ 24: DIAS_HISTORICOS = 30
+ 25: REFRESH_HORAS = 24
+ 26: INTERVALO_CHEQUEO = 60
+ 27: VENTANA_MINUTOS = 15
+ 28: 
+ 29: 
+ 30: def obtener_inicio_ventana():
+ 31:     ahora = datetime.now(timezone.utc)
+ 32:     minutos = (ahora.minute // VENTANA_MINUTOS) * VENTANA_MINUTOS
+ 33:     return ahora.replace(minute=minutos, second=0, microsecond=0)
+ 34: 
+ 35: 
+ 36: def generar_slug():
+ 37:     inicio = obtener_inicio_ventana()
+ 38:     return f"btc-updown-15m-{int(inicio.timestamp())}"
+ 39: 
+ 40: 
+ 41: 
+ 42: 
+ 43: async def obtener_mercado(session):
+ 44:     """Datos del mercado simulando el fill REAL de una orden de TAMANO_ORDEN (VWAP del libro)."""
+ 45:     try:
+ 46:         slug = generar_slug()
+ 47:         url = f"https://gamma-api.polymarket.com/events?slug={slug}"
+ 48:         async with session.get(url) as resp:
+ 49:             data = await resp.json()
+ 50:         if not data:
+ 51:             return None
+ 52:         event = data[0]
+ 53:         _, volumen, liquidez = parse_mercado(event)
+ 54:         vwap, llenado, completo, niveles, mejor_ask = await simular_fill_clob(
+ 55:             session, token_up(event), TAMANO_ORDEN)
+ 56:         return {"vwap": vwap, "llenado": llenado, "completo": completo,
+ 57:                 "niveles": niveles, "mejor_ask": mejor_ask,
+ 58:                 "volumen": volumen, "liquidez": liquidez}
+ 59:     except Exception:
+ 60:         return None
+ 61: 
+ 62: 
+ 63: async def main():
+ 64:     global TABLA
+ 65: 
+ 66:     init(TF, "calibrando 30 días (probabilidad por minuto)…")
+ 67:     TABLA = ejecutar_analisis_temporal(interval="15m", days=DIAS_HISTORICOS, source=SOURCE)
+ 68: 
+ 69:     CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "senales_15m.csv")
+ 70: 
+ 71:     init(TF, f"filtros: liquidez≥${MIN_LIQUIDEZ:,.0f} · orden {TAMANO_ORDEN:.0f}u · EV≥{MARGEN_EV_MINIMO*100:.0f}% · fee {FEE:.2f} · ventana {VENTANA_MINUTOS}m")
+ 72:     init(TF, f"fuente de precio: Coinbase BTC/USD (par USD = la resolución {FUENTE})")
+ 73: 
+ 74:     if not os.path.exists(CSV_FILE):
+ 75:         with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
+ 76:             csv.writer(f).writerow(['Fecha/Hora', 'Ventana', 'Min transcurrido', 'Apertura', 'Minimo', 'Caida %',
+ 77:                                     'Prob', 'Ask UP', 'Volumen', 'Liquidez', 'EV', 'Accion', 'Resultado'])
+ 78:         with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+ 79:             csv.writer(f).writerow([f"=== SESION: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} ==="])
+ 80: 
+ 81:     async with aiohttp.ClientSession() as session:
+ 82:         apertura = None
+ 83:         minimo = None
+ 84:         ventana_actual = None
+ 85:         inicio_ventana = None
+ 86:         apertura_ant = None
+ 87:         cierre_ant = None
+ 88:         senal_ant = False
+ 89:         senal_precio_up = 0.0
+ 90:         senal_ya_registrada = False
+ 91:         wins = 0
+ 92:         losses = 0
+ 93:         pnl_total = 0.0
+ 94:         ultimo_refresh = datetime.now(timezone.utc)
+ 95: 
+ 96:         while True:
+ 97:             try:
+ 98:                 ahora = datetime.now(timezone.utc)
+ 99: 
+100:                 if (ahora - ultimo_refresh).total_seconds() >= REFRESH_HORAS * 3600:
+101:                     init(TF, "re-calibrando…")
+102:                     TABLA = ejecutar_analisis_temporal(interval="15m", days=DIAS_HISTORICOS, source=SOURCE)
+103:                     ultimo_refresh = ahora
+104: 
+105:                 inicio_ventana = obtener_inicio_ventana()
+106:                 inicio_str = inicio_ventana.strftime("%Y-%m-%d %H:%M:%S")
+107:                 fin_ventana = inicio_ventana + timedelta(minutes=VENTANA_MINUTOS)
+108: 
+109:                 precio_actual = await precio_vivo(session, SOURCE)
+110:                 if precio_actual is None:
+111:                     await asyncio.sleep(INTERVALO_CHEQUEO)
+112:                     continue
+113: 
+114:                 if ventana_actual != inicio_str:
+115:                     # Cierre de la ventana anterior = precio EXACTO en la frontera
+116:                     # (apertura de la nueva ventana), determinista e idéntico para
+117:                     # todos los bots. Corrige el desfase del ticker en vivo.
+118:                     precio_real, minimo_real = await apertura_y_minimo(session, inicio_ventana, SOURCE)
+119:                     if precio_real is None:
+120:                         precio_real = await precio_frontera(session, inicio_ventana, SOURCE)
+121:                     cierre_ant = precio_real if precio_real else precio_actual
+122: 
+123:                     wins, losses, pnl_total, etiqueta = registrar_resultado(
+124:                         TF, apertura_ant, cierre_ant, senal_ant, senal_precio_up, wins, losses, pnl_total)
+125:                     if etiqueta and senal_ant:
+126:                         with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+127:                             csv.writer(f).writerow([''] * 12 + [etiqueta])
+128: 
+129:                     apertura_ant = apertura
+130:                     apertura = precio_real if precio_real else precio_actual
+131:                     minimo = min(minimo_real, precio_actual) if minimo_real else precio_actual
+132:                     ventana_actual = inicio_str
+133:                     senal_ant = False
+134:                     senal_ya_registrada = False
+135: 
+136:                     extra = f" · cierre ant ${cierre_ant:,.2f}" if apertura_ant else ""
+137:                     ventana(TF, f"{inicio_ventana.strftime('%H:%M')}→{fin_ventana.strftime('%H:%M')} · apertura ${apertura:,.2f}{extra}")
+138:                 else:
+139:                     if precio_actual < minimo:
+140:                         minimo = precio_actual
+141: 
+142:                 caida = (apertura - minimo) / apertura
+143:                 caida_pct = caida * 100
+144:                 elapsed_min = (ahora - inicio_ventana).total_seconds() / 60
+145: 
+146:                 minutos_restantes = VENTANA_MINUTOS - (ahora.minute % VENTANA_MINUTOS)
+147:                 if minutos_restantes <= 2:
+148:                     await asyncio.sleep(INTERVALO_CHEQUEO)
+149:                     continue
+150: 
+151:                 prob = probabilidad_temporal(TABLA, "15m", elapsed_min, caida_pct)
+152: 
+153:                 if prob > 0 and not senal_ya_registrada:
+154:                     tend = await tendencia_pct(session, REGIMEN_LOOKBACK_MIN, SOURCE)
+155:                     if tend < REGIMEN_MIN_PCT:
+156:                         aviso(TF, f"régimen bajista ({tend:+.2f}% en {REGIMEN_LOOKBACK_MIN}m) · sin operar")
+157:                         senal_ya_registrada = True
+158:                         await asyncio.sleep(INTERVALO_CHEQUEO)
+159:                         continue
+160:                     mercado = await obtener_mercado(session)
+161:                     if mercado:
+162:                         vwap = mercado["vwap"]
+163:                         completo = mercado["completo"]
+164:                         mejor_ask = mercado["mejor_ask"]
+165:                         niveles = mercado["niveles"]
+166:                         liquidez = mercado["liquidez"]
+167:                         volumen = mercado["volumen"]
+168:                         if vwap >= 0.01 and liquidez >= MIN_LIQUIDEZ and completo:
+169:                             precio_entrada = vwap + FEE
+170:                             slippage = vwap - mejor_ask
+171:                             ev = prob - precio_entrada
+172:                             if ev >= MARGEN_EV_MINIMO:
+173:                                 senal_ant = True
+174:                                 senal_precio_up = precio_entrada
+175:                                 senal_ya_registrada = True
+176:                                 senal(TF, f"SEÑAL · +{int(elapsed_min)}min · caída {caida_pct:.2f}% · prob {prob*100:.0f}% · fill ${vwap:.3f} (mejor ${mejor_ask:.2f} +slip ${slippage:.3f}/{niveles}niv +fee {FEE:.2f}) · EV +{ev*100:.1f}% · liq ${liquidez:,.0f}")
+177:                                 with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+178:                                     csv.writer(f).writerow([ahora.strftime("%Y-%m-%d %H:%M:%S"), inicio_str, f"{int(elapsed_min)}",
+179:                                         f"{apertura:,.2f}", f"{minimo:,.2f}", f"{caida_pct:.2f}%",
+180:                                         f"{prob*100:.1f}%", f"{precio_entrada:.3f}", f"{volumen:,.0f}", f"{liquidez:,.0f}",
+181:                                         f"+{ev*100:.1f}%", "COMPRAR UP", ""])
+182: 
+183:                 await asyncio.sleep(INTERVALO_CHEQUEO)
+184: 
+185:             except KeyboardInterrupt:
+186:                 resumen_final(TF, wins, losses, pnl_total)
+187:                 break
+188:             except Exception as e:
+189:                 aviso(TF, f"error: {e}")
+190:                 await asyncio.sleep(INTERVALO_CHEQUEO)
+191: 
+192: 
+193: if __name__ == "__main__":
+194:     asyncio.run(main())
+</file>
+
+<file path="poly/15_minutos/senales_15m.csv">
+1: Fecha/Hora,Ventana,Min transcurrido,Apertura,Minimo,Caida %,Prob,Ask UP,Volumen,Liquidez,EV,Accion,Resultado
+2: === SESION: 2026-06-04 19:44:30 ===
+</file>
+
+<file path="poly/5_minutos/analisis_historico_5m.py">
+  1: import urllib.request
+  2: import json
+  3: import time
+  4: from datetime import datetime, timezone
+  5: from collections import defaultdict
+  6: 
+  7: print("🚀 Iniciando análisis granular de datos históricos de Binance (5 minutos, 30 días)...")
+  8: 
+  9: symbol = "BTCUSDT"
+ 10: interval = "5m"
+ 11: limit = 1000
+ 12: days = 30
+ 13: end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
+ 14: start_time = end_time - (days * 24 * 60 * 60 * 1000)
+ 15: 
+ 16: all_candles = []
+ 17: current_start = start_time
+ 18: 
+ 19: while current_start < end_time:
+ 20:     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}&startTime={current_start}"
+ 21:     try:
+ 22:         with urllib.request.urlopen(url) as response:
+ 23:             data = json.loads(response.read().decode())
+ 24:             if not data:
+ 25:                 break
+ 26:             all_candles.extend(data)
+ 27:             current_start = data[-1][0] + 300000  # Avanzar 5 minutos
+ 28:             time.sleep(0.1)
+ 29:     except Exception:
+ 30:         break
+ 31: 
+ 32: print(f"✅ Descarga completada. Total de velas de 5m: {len(all_candles)}")
+ 33: 
+ 34: # Agrupar por ventana de 5 minutos
+ 35: windows_data = {}
+ 36: for candle in all_candles:
+ 37:     open_time_ms = candle[0]
+ 38:     open_price = float(candle[1])
+ 39:     low_price = float(candle[3])
+ 40:     close_price = float(candle[4])
+ 41:     
+ 42:     window_key = (open_time_ms // (5 * 60 * 1000)) * (5 * 60 * 1000)
+ 43:     
+ 44:     if window_key not in windows_data:
+ 45:         windows_data[window_key] = {'open': open_price, 'low': low_price, 'close': close_price}
+ 46:     else:
+ 47:         if low_price < windows_data[window_key]['low']:
+ 48:             windows_data[window_key]['low'] = low_price
+ 49:         windows_data[window_key]['close'] = close_price
+ 50: 
+ 51: # Análisis granular por rangos de caída (más ajustados para 5 minutos)
+ 52: buckets = defaultdict(lambda: {'total': 0, 'up_wins': 0})
+ 53: 
+ 54: for window_key, data in windows_data.items():
+ 55:     open_p = data['open']
+ 56:     low_p = data['low']
+ 57:     close_p = data['close']
+ 58:     
+ 59:     caida = (open_p - low_p) / open_p
+ 60:     caida_pct = caida * 100
+ 61:     
+ 62:     # Rangos de 0.05% en 0.05% para 5 minutos
+ 63:     if caida_pct <= 0.05:
+ 64:         bucket = "0.0005"
+ 65:     elif caida_pct <= 0.10:
+ 66:         bucket = "0.001"
+ 67:     elif caida_pct <= 0.15:
+ 68:         bucket = "0.0015"
+ 69:     elif caida_pct <= 0.20:
+ 70:         bucket = "0.002"
+ 71:     elif caida_pct <= 0.30:
+ 72:         bucket = "0.003"
+ 73:     else:
+ 74:         bucket = ">0.003"
+ 75:         
+ 76:     buckets[bucket]['total'] += 1
+ 77:     if close_p >= open_p:
+ 78:         buckets[bucket]['up_wins'] += 1
+ 79: 
+ 80: print("\n" + "="*65)
+ 81: print("📊 MAPA DE PROBABILIDADES HISTÓRICAS (5 MINUTOS)")
+ 82: print("="*65)
+ 83: print(f"{'Rango de Caída':<18} | {'Muestras':<10} | {'Victorias UP':<12} | {'Probabilidad UP':<15}")
+ 84: print("-" * 65)
+ 85: 
+ 86: mapa_para_bot = {}
+ 87: bucket_order = ["0.0005", "0.001", "0.0015", "0.002", "0.003", ">0.003"]
+ 88: bucket_labels = {
+ 89:     "0.0005": "0.00% - 0.05%",
+ 90:     "0.001": "0.05% - 0.10%",
+ 91:     "0.0015": "0.10% - 0.15%",
+ 92:     "0.002": "0.15% - 0.20%",
+ 93:     "0.003": "0.20% - 0.30%",
+ 94:     ">0.003": "> 0.30%"
+ 95: }
+ 96: 
+ 97: for bucket in bucket_order:
+ 98:     label = bucket_labels[bucket]
+ 99:     if bucket in buckets and buckets[bucket]['total'] >= 20:
+100:         prob = (buckets[bucket]['up_wins'] / buckets[bucket]['total'])
+101:         if bucket != ">0.003":
+102:             mapa_para_bot[float(bucket)] = round(prob, 3)
+103:         print(f"{label:<18} | {buckets[bucket]['total']:<10} | {buckets[bucket]['up_wins']:<12} | {prob*100:.1f}%")
+104:     elif bucket in buckets:
+105:         print(f"{label:<18} | {buckets[bucket]['total']:<10} | {buckets[bucket]['up_wins']:<12} | (Muestra baja)")
+106: 
+107: print("\n" + "="*65)
+108: print("📋 COPIA ESTE DICCIONARIO EN TU BOT DE 5 MINUTOS:")
+109: print("MAPA_PROBABILIDADES = {")
+110: for k, v in sorted(mapa_para_bot.items()):
+111:     pct_label = f"{k*100:.2f}%"
+112:     print(f"    {k}: {v},  # Caída <= {pct_label} -> {v*100:.1f}% prob. UP")
+113: print("}")
+114: print("="*65)
+115: print("\n📌 PARÁMETROS RECOMENDADOS PARA EL BOT DE 5 MINUTOS:")
+116: print("   - Frecuencia de chequeo: Cada 30 segundos")
+117: print("   - Filtro de liquidez: >= $5,000 USD volumen 24h")
+118: print("   - Margen de EV Neto mínimo: >= 5%")
+119: print("   - Tiempo de validación: 6-8 horas (para ~40 señales estadísticamente válidas)")
+120: print("="*65)
+</file>
+
+<file path="poly/5_minutos/paper_trading_bot_5m.py">
+  1: import asyncio
+  2: import aiohttp
+  3: import csv
+  4: import os
+  5: import sys
+  6: from datetime import datetime, timezone, timedelta
+  7: 
+  8: sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+  9: from analisis_historico_modulo import ejecutar_analisis_temporal, probabilidad_temporal
+ 10: from cli_util import (init, aviso, ventana, senal, registrar_resultado, resumen_final,
+ 11:                       parse_mercado, token_up, simular_fill_clob, precio_frontera, tendencia_pct,
+ 12:                       precio_vivo, apertura_y_minimo)
+ 13: 
+ 14: TF = "5m"
+ 15: SOURCE = "coinbase"          # Coinbase BTC/USD: par USD = el de la resolución (Chainlink BTC/USD)
+ 16: FUENTE = "Chainlink BTC/USD ≈ Coinbase BTC/USD"
+ 17: TABLA = {}
+ 18: MIN_LIQUIDEZ = 5000.0
+ 19: TAMANO_ORDEN = 100.0       # unidades de UP que simulamos comprar (para medir slippage real del libro)
+ 20: FEE = 0.01                 # colchón de comisiones (el slippage ya lo modela el VWAP del order book)
+ 21: MARGEN_EV_MINIMO = 0.05
+ 22: REGIMEN_LOOKBACK_MIN = 60  # ventana para medir el régimen (tendencia reciente)
+ 23: REGIMEN_MIN_PCT = -0.60    # si BTC cayó más que esto en el lookback, NO operar (caída libre)
+ 24: DIAS_HISTORICOS = 30
+ 25: REFRESH_HORAS = 24
+ 26: INTERVALO_CHEQUEO = 30
+ 27: VENTANA_MINUTOS = 5
+ 28: 
+ 29: 
+ 30: def obtener_inicio_ventana():
+ 31:     ahora = datetime.now(timezone.utc)
+ 32:     minutos = (ahora.minute // VENTANA_MINUTOS) * VENTANA_MINUTOS
+ 33:     return ahora.replace(minute=minutos, second=0, microsecond=0)
+ 34: 
+ 35: 
+ 36: def generar_slug():
+ 37:     inicio = obtener_inicio_ventana()
+ 38:     return f"btc-updown-5m-{int(inicio.timestamp())}"
+ 39: 
+ 40: 
+ 41: async def obtener_mercado(session):
+ 42:     """Devuelve datos del mercado simulando el fill REAL de una orden de TAMANO_ORDEN.
+ 43: 
+ 44:     Caminamos el order book del CLOB para obtener el precio promedio de ejecución
+ 45:     (VWAP), que modela el slippage real. Devuelve dict o None si no hay mercado.
+ 46:     """
+ 47:     try:
+ 48:         slug = generar_slug()
+ 49:         url = f"https://gamma-api.polymarket.com/events?slug={slug}"
+ 50:         async with session.get(url) as resp:
+ 51:             data = await resp.json()
+ 52:         if not data:
+ 53:             return None
+ 54:         event = data[0]
+ 55:         _, volumen, liquidez = parse_mercado(event)
+ 56:         vwap, llenado, completo, niveles, mejor_ask = await simular_fill_clob(
+ 57:             session, token_up(event), TAMANO_ORDEN)
+ 58:         return {"vwap": vwap, "llenado": llenado, "completo": completo,
+ 59:                 "niveles": niveles, "mejor_ask": mejor_ask,
+ 60:                 "volumen": volumen, "liquidez": liquidez}
+ 61:     except Exception:
+ 62:         return None
+ 63: 
+ 64: 
+ 65: async def main():
+ 66:     global TABLA
+ 67: 
+ 68:     init(TF, "calibrando 30 días (probabilidad por minuto)…")
+ 69:     TABLA = ejecutar_analisis_temporal(interval="5m", days=DIAS_HISTORICOS, source=SOURCE)
+ 70: 
+ 71:     CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "senales_5m.csv")
+ 72: 
+ 73:     init(TF, f"filtros: liquidez≥${MIN_LIQUIDEZ:,.0f} · orden {TAMANO_ORDEN:.0f}u · EV≥{MARGEN_EV_MINIMO*100:.0f}% · fee {FEE:.2f} · ventana {VENTANA_MINUTOS}m")
+ 74:     init(TF, f"fuente de precio: Coinbase BTC/USD (par USD = la resolución {FUENTE})")
+ 75: 
+ 76:     if not os.path.exists(CSV_FILE):
+ 77:         with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
+ 78:             csv.writer(f).writerow(['Fecha/Hora', 'Ventana', 'Min transcurrido', 'Apertura', 'Minimo', 'Caida %',
+ 79:                                     'Prob', 'Ask UP', 'Volumen', 'Liquidez', 'EV', 'Accion', 'Resultado'])
+ 80:         with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+ 81:             csv.writer(f).writerow([f"=== SESION: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} ==="])
+ 82: 
+ 83:     async with aiohttp.ClientSession() as session:
+ 84:         apertura = None
+ 85:         minimo = None
+ 86:         ventana_actual = None
+ 87:         inicio_ventana = None
+ 88:         apertura_ant = None
+ 89:         cierre_ant = None
+ 90:         senal_ant = False
+ 91:         senal_precio_up = 0.0
+ 92:         senal_ya_registrada = False
+ 93:         wins = 0
+ 94:         losses = 0
+ 95:         pnl_total = 0.0
+ 96:         ultimo_refresh = datetime.now(timezone.utc)
+ 97: 
+ 98:         while True:
+ 99:             try:
+100:                 ahora = datetime.now(timezone.utc)
+101: 
+102:                 if (ahora - ultimo_refresh).total_seconds() >= REFRESH_HORAS * 3600:
+103:                     init(TF, "re-calibrando…")
+104:                     TABLA = ejecutar_analisis_temporal(interval="5m", days=DIAS_HISTORICOS, source=SOURCE)
+105:                     ultimo_refresh = ahora
+106: 
+107:                 inicio_ventana = obtener_inicio_ventana()
+108:                 inicio_str = inicio_ventana.strftime("%Y-%m-%d %H:%M:%S")
+109:                 fin_ventana = inicio_ventana + timedelta(minutes=VENTANA_MINUTOS)
+110: 
+111:                 precio_actual = await precio_vivo(session, SOURCE)
+112:                 if precio_actual is None:
+113:                     await asyncio.sleep(INTERVALO_CHEQUEO)
+114:                     continue
+115: 
+116:                 if ventana_actual != inicio_str:
+117:                     # Cierre de la ventana anterior = precio EXACTO en la frontera
+118:                     # (apertura de la nueva ventana), determinista e idéntico para
+119:                     # todos los bots. Corrige el desfase del ticker en vivo.
+120:                     precio_real, minimo_real = await apertura_y_minimo(session, inicio_ventana, SOURCE)
+121:                     if precio_real is None:
+122:                         precio_real = await precio_frontera(session, inicio_ventana, SOURCE)
+123:                     cierre_ant = precio_real if precio_real else precio_actual
+124: 
+125:                     wins, losses, pnl_total, etiqueta = registrar_resultado(
+126:                         TF, apertura_ant, cierre_ant, senal_ant, senal_precio_up, wins, losses, pnl_total)
+127:                     if etiqueta and senal_ant:
+128:                         with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+129:                             csv.writer(f).writerow([''] * 12 + [etiqueta])
+130: 
+131:                     apertura_ant = apertura
+132:                     apertura = precio_real if precio_real else precio_actual
+133:                     minimo = min(minimo_real, precio_actual) if minimo_real else precio_actual
+134:                     ventana_actual = inicio_str
+135:                     senal_ant = False
+136:                     senal_ya_registrada = False
+137: 
+138:                     extra = f" · cierre ant ${cierre_ant:,.2f}" if apertura_ant else ""
+139:                     ventana(TF, f"{inicio_ventana.strftime('%H:%M')}→{fin_ventana.strftime('%H:%M')} · apertura ${apertura:,.2f}{extra}")
+140:                 else:
+141:                     if precio_actual < minimo:
+142:                         minimo = precio_actual
+143: 
+144:                 caida = (apertura - minimo) / apertura
+145:                 caida_pct = caida * 100
+146:                 elapsed_min = (ahora - inicio_ventana).total_seconds() / 60
+147: 
+148:                 minutos_restantes = VENTANA_MINUTOS - (ahora.minute % VENTANA_MINUTOS)
+149:                 if minutos_restantes <= 1:
+150:                     await asyncio.sleep(INTERVALO_CHEQUEO)
+151:                     continue
+152: 
+153:                 prob = probabilidad_temporal(TABLA, "5m", elapsed_min, caida_pct)
+154: 
+155:                 if prob > 0 and not senal_ya_registrada:
+156:                     tend = await tendencia_pct(session, REGIMEN_LOOKBACK_MIN, SOURCE)
+157:                     if tend < REGIMEN_MIN_PCT:
+158:                         aviso(TF, f"régimen bajista ({tend:+.2f}% en {REGIMEN_LOOKBACK_MIN}m) · sin operar")
+159:                         senal_ya_registrada = True
+160:                         await asyncio.sleep(INTERVALO_CHEQUEO)
+161:                         continue
+162:                     mercado = await obtener_mercado(session)
+163:                     if mercado:
+164:                         vwap = mercado["vwap"]
+165:                         completo = mercado["completo"]
+166:                         mejor_ask = mercado["mejor_ask"]
+167:                         niveles = mercado["niveles"]
+168:                         liquidez = mercado["liquidez"]
+169:                         volumen = mercado["volumen"]
+170:                         if vwap >= 0.01 and liquidez >= MIN_LIQUIDEZ and completo:
+171:                             precio_entrada = vwap + FEE
+172:                             slippage = vwap - mejor_ask
+173:                             ev = prob - precio_entrada
+174:                             if ev >= MARGEN_EV_MINIMO:
+175:                                 senal_ant = True
+176:                                 senal_precio_up = precio_entrada
+177:                                 senal_ya_registrada = True
+178:                                 senal(TF, f"SEÑAL · +{int(elapsed_min)}min · caída {caida_pct:.2f}% · prob {prob*100:.0f}% · fill ${vwap:.3f} (mejor ${mejor_ask:.2f} +slip ${slippage:.3f}/{niveles}niv +fee {FEE:.2f}) · EV +{ev*100:.1f}% · liq ${liquidez:,.0f}")
+179:                                 with open(CSV_FILE, 'a', newline='', encoding='utf-8') as f:
+180:                                     csv.writer(f).writerow([ahora.strftime("%Y-%m-%d %H:%M:%S"), inicio_str, f"{int(elapsed_min)}",
+181:                                         f"{apertura:,.2f}", f"{minimo:,.2f}", f"{caida_pct:.2f}%",
+182:                                         f"{prob*100:.1f}%", f"{precio_entrada:.3f}", f"{volumen:,.0f}", f"{liquidez:,.0f}",
+183:                                         f"+{ev*100:.1f}%", "COMPRAR UP", ""])
+184: 
+185:                 await asyncio.sleep(INTERVALO_CHEQUEO)
+186: 
+187:             except KeyboardInterrupt:
+188:                 resumen_final(TF, wins, losses, pnl_total)
+189:                 break
+190:             except Exception as e:
+191:                 aviso(TF, f"error: {e}")
+192:                 await asyncio.sleep(INTERVALO_CHEQUEO)
+193: 
+194: 
+195: if __name__ == "__main__":
+196:     asyncio.run(main())
+</file>
+
+<file path="poly/5_minutos/senales_5m.csv">
+1: Fecha/Hora,Ventana,Min transcurrido,Apertura,Minimo,Caida %,Prob,Ask UP,Volumen,Liquidez,EV,Accion,Resultado
+2: === SESION: 2026-06-04 19:44:38 ===
+3: 2026-06-04 19:46:09,2026-06-04 19:45:00,1,"63,655.41","63,627.25",0.04%,54.2%,0.30,366,"9,209",+24.2%,COMPRAR UP,
+4: ,,,,,,,,,,,,LOSS
+5: 2026-06-04 19:52:15,2026-06-04 19:50:00,2,"63,625.23","63,619.95",0.01%,59.3%,0.50,594,"11,943",+9.3%,COMPRAR UP,
+6: ,,,,,,,,,,,,LOSS
+</file>
+
+<file path="poly/analisis_historico_modulo.py">
+  1: import urllib.request
+  2: import json
+  3: import time
+  4: from datetime import datetime, timezone, timedelta
+  5: from collections import defaultdict
+  6: 
+  7: _UA = {"User-Agent": "Mozilla/5.0"}
+  8: _GRAN_COINBASE = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
+  9: 
+ 10: 
+ 11: def descargar_velas_binance(symbol="BTCUSDT", interval="1m", days=30):
+ 12:     """Descarga datos históricos de Binance. Formato Binance: [openTime, open, high, low, close, ...]."""
+ 13:     limit = 1000
+ 14:     end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
+ 15:     start_time = end_time - (days * 24 * 60 * 60 * 1000)
+ 16:     
+ 17:     interval_ms = {"1m": 60000, "5m": 300000, "15m": 900000, "30m": 1800000, "1h": 3600000, "4h": 14400000}
+ 18:     ms = interval_ms.get(interval, 60000)
+ 19:     
+ 20:     all_candles = []
+ 21:     current_start = start_time
+ 22:     
+ 23:     while current_start < end_time:
+ 24:         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}&startTime={current_start}"
+ 25:         try:
+ 26:             with urllib.request.urlopen(url) as response:
+ 27:                 data = json.loads(response.read().decode())
+ 28:                 if not data:
+ 29:                     break
+ 30:                 all_candles.extend(data)
+ 31:                 current_start = data[-1][0] + ms
+ 32:                 time.sleep(0.1)
+ 33:         except Exception:
+ 34:             break
+ 35:     
+ 36:     return all_candles
+ 37: 
+ 38: 
+ 39: def descargar_velas_coinbase(interval="1m", days=30, product="BTC-USD"):
+ 40:     """Descarga histórico de Coinbase (par USD, igual que la fuente de resolución de 5m/15m).
+ 41: 
+ 42:     Coinbase devuelve [time_s, low, high, open, close, volume] (máx 300, más reciente
+ 43:     primero). Se normaliza al MISMO formato que Binance: [openTime_ms, open, high, low, close]
+ 44:     y se ordena ascendente, para que el resto del análisis funcione sin cambios.
+ 45:     """
+ 46:     gran = _GRAN_COINBASE.get(interval, 60)
+ 47:     paso = gran  # segundos por vela
+ 48:     span = 300 * paso  # segundos por petición (300 velas)
+ 49:     end = int(datetime.now(timezone.utc).timestamp())
+ 50:     inicio_global = end - days * 24 * 3600
+ 51: 
+ 52:     normalizadas = []
+ 53:     cur_end = end
+ 54:     while cur_end > inicio_global:
+ 55:         cur_start = max(inicio_global, cur_end - span)
+ 56:         s_iso = datetime.fromtimestamp(cur_start, timezone.utc).isoformat()
+ 57:         e_iso = datetime.fromtimestamp(cur_end, timezone.utc).isoformat()
+ 58:         url = (f"https://api.exchange.coinbase.com/products/{product}/candles"
+ 59:                f"?granularity={gran}&start={s_iso}&end={e_iso}")
+ 60:         try:
+ 61:             req = urllib.request.Request(url, headers=_UA)
+ 62:             with urllib.request.urlopen(req, timeout=20) as response:
+ 63:                 data = json.loads(response.read().decode())
+ 64:         except Exception:
+ 65:             time.sleep(0.4)
+ 66:             cur_end = cur_start
+ 67:             continue
+ 68:         if not data:
+ 69:             cur_end = cur_start
+ 70:             continue
+ 71:         for c in data:  # [time_s, low, high, open, close, volume]
+ 72:             normalizadas.append([c[0] * 1000, c[3], c[2], c[1], c[4]])
+ 73:         cur_end = cur_start
+ 74:         time.sleep(0.25)
+ 75: 
+ 76:     normalizadas.sort(key=lambda x: x[0])
+ 77:     return normalizadas
+ 78: 
+ 79: 
+ 80: def descargar_velas(interval="1m", days=30, source="binance"):
+ 81:     """Dispatcher de fuente. Devuelve velas normalizadas [openTime_ms, open, high, low, close]."""
+ 82:     if source == "coinbase":
+ 83:         return descargar_velas_coinbase(interval=interval, days=days)
+ 84:     return descargar_velas_binance(interval=interval, days=days)
+ 85: 
+ 86: def agrupar_por_ventana(all_candles, interval):
+ 87:     """Agrupa las velas por su ventana de tiempo correspondiente."""
+ 88:     if interval == "1m":
+ 89:         window_ms = 60000
+ 90:     elif interval == "5m":
+ 91:         window_ms = 300000
+ 92:     elif interval == "15m":
+ 93:         window_ms = 900000
+ 94:     elif interval == "30m":
+ 95:         window_ms = 1800000
+ 96:     elif interval == "1h":
+ 97:         window_ms = 3600000
+ 98:     elif interval == "4h":
+ 99:         window_ms = 14400000
+100:     else:
+101:         window_ms = 60000
+102:     
+103:     windows_data = {}
+104:     for candle in all_candles:
+105:         open_time_ms = candle[0]
+106:         open_price = float(candle[1])
+107:         low_price = float(candle[3])
+108:         close_price = float(candle[4])
+109:         
+110:         window_key = (open_time_ms // window_ms) * window_ms
+111:         
+112:         if window_key not in windows_data:
+113:             windows_data[window_key] = {'open': open_price, 'low': low_price, 'close': close_price}
+114:         else:
+115:             if low_price < windows_data[window_key]['low']:
+116:                 windows_data[window_key]['low'] = low_price
+117:             windows_data[window_key]['close'] = close_price
+118:     
+119:     return windows_data
+120: 
+121: def calcular_mapa_probabilidades(windows_data, interval):
+122:     """Calcula el mapa de probabilidades basado en los datos históricos agrupados."""
+123:     buckets = defaultdict(lambda: {'total': 0, 'up_wins': 0})
+124:     
+125:     for window_key, data in windows_data.items():
+126:         open_p = data['open']
+127:         low_p = data['low']
+128:         close_p = data['close']
+129:         
+130:         if open_p == 0:
+131:             continue
+132:             
+133:         caida = (open_p - low_p) / open_p
+134:         caida_pct = caida * 100
+135:         
+136:         # Definir rangos según el intervalo
+137:         if interval in ["1m", "5m"]:
+138:             # Rangos de 0.05% para intervalos cortos
+139:             if caida_pct <= 0.05:
+140:                 bucket = 0.0005
+141:             elif caida_pct <= 0.10:
+142:                 bucket = 0.001
+143:             elif caida_pct <= 0.15:
+144:                 bucket = 0.0015
+145:             elif caida_pct <= 0.20:
+146:                 bucket = 0.002
+147:             elif caida_pct <= 0.30:
+148:                 bucket = 0.003
+149:             else:
+150:                 bucket = None
+151:         elif interval in ["15m", "30m"]:
+152:             # Rangos de 0.1% para intervalos medianos
+153:             if caida_pct <= 0.1:
+154:                 bucket = 0.001
+155:             elif caida_pct <= 0.2:
+156:                 bucket = 0.002
+157:             elif caida_pct <= 0.3:
+158:                 bucket = 0.003
+159:             elif caida_pct <= 0.5:
+160:                 bucket = 0.005
+161:             elif caida_pct <= 1.0:
+162:                 bucket = 0.01
+163:             else:
+164:                 bucket = None
+165:         elif interval == "1h":
+166:             # Rangos de 0.1% para 1 hora
+167:             if caida_pct <= 0.1:
+168:                 bucket = 0.001
+169:             elif caida_pct <= 0.2:
+170:                 bucket = 0.002
+171:             elif caida_pct <= 0.5:
+172:                 bucket = 0.005
+173:             elif caida_pct <= 1.0:
+174:                 bucket = 0.01
+175:             else:
+176:                 bucket = None
+177:         elif interval == "4h":
+178:             # Rangos de 0.2% para 4 horas
+179:             if caida_pct <= 0.2:
+180:                 bucket = 0.002
+181:             elif caida_pct <= 0.5:
+182:                 bucket = 0.005
+183:             elif caida_pct <= 1.0:
+184:                 bucket = 0.01
+185:             elif caida_pct <= 2.0:
+186:                 bucket = 0.02
+187:             else:
+188:                 bucket = None
+189:         else:
+190:             bucket = None
+191:         
+192:         if bucket is not None:
+193:             buckets[bucket]['total'] += 1
+194:             if close_p >= open_p:
+195:                 buckets[bucket]['up_wins'] += 1
+196:     
+197:     # Construir el mapa final (solo buckets con suficientes muestras)
+198:     min_muestras = 15
+199:     mapa = {}
+200:     for bucket, stats in sorted(buckets.items()):
+201:         if stats['total'] >= min_muestras:
+202:             prob = stats['up_wins'] / stats['total']
+203:             if prob > 0.5:  # Solo incluir rangos con ventaja estadística real
+204:                 mapa[bucket] = round(prob, 3)
+205:     
+206:     return mapa
+207: 
+208: def ejecutar_analisis(interval="1m", days=30):
+209:     """Función principal: descarga datos, analiza y devuelve el mapa de probabilidades."""
+210:     candles = descargar_velas_binance(interval=interval, days=days)
+211:     windows = agrupar_por_ventana(candles, interval)
+212:     mapa = calcular_mapa_probabilidades(windows, interval)
+213: 
+214:     print(f"⚙️  calib {interval}: {len(candles)} velas · {len(windows)} ventanas · {len(mapa)} rangos con ventaja", flush=True)
+215:     
+216:     return mapa
+217: 
+218: 
+219: # ---------------------------------------------------------------------------
+220: # Análisis TEMPORAL: probabilidad condicionada al tiempo transcurrido.
+221: #
+222: # El mapa simple responde "dado que la caída MÁXIMA de toda la ventana fue <=X%,
+223: # ¿qué % cerró UP?". En vivo eso es sesgo de look-ahead: al inicio de la ventana
+224: # la caída acumulada es ~0 pero todavía no sabes cuánto caerá. El mapa temporal
+225: # responde la pregunta correcta: "dado que a los E minutos la caída ACUMULADA
+226: # hasta ahora es <=X%, ¿qué % cierra UP?".
+227: # ---------------------------------------------------------------------------
+228: 
+229: # (sub_intervalo, paso_min, checkpoints_en_minutos, minutos_ventana)
+230: _SUB_CONFIG = {
+231:     "5m":  ("1m", 1, list(range(1, 5)),  5),
+232:     "15m": ("1m", 1, list(range(1, 15)), 15),
+233:     "1h":  ("5m", 5, list(range(5, 60, 5)), 60),
+234: }
+235: 
+236: 
+237: def _drop_bucket(interval, caida_pct):
+238:     if interval in ("1m", "5m"):
+239:         if caida_pct <= 0.05: return 0.0005
+240:         if caida_pct <= 0.10: return 0.001
+241:         if caida_pct <= 0.15: return 0.0015
+242:         if caida_pct <= 0.20: return 0.002
+243:         if caida_pct <= 0.30: return 0.003
+244:         return None
+245:     if interval in ("15m", "30m"):
+246:         if caida_pct <= 0.1: return 0.001
+247:         if caida_pct <= 0.2: return 0.002
+248:         if caida_pct <= 0.3: return 0.003
+249:         if caida_pct <= 0.5: return 0.005
+250:         if caida_pct <= 1.0: return 0.01
+251:         return None
+252:     if interval == "1h":
+253:         if caida_pct <= 0.1: return 0.001
+254:         if caida_pct <= 0.2: return 0.002
+255:         if caida_pct <= 0.5: return 0.005
+256:         if caida_pct <= 1.0: return 0.01
+257:         return None
+258:     return None
+259: 
+260: 
+261: def ejecutar_analisis_temporal(interval="5m", days=30, source="binance"):
+262:     """Descarga sub-velas finas y construye la tabla de probabilidad condicionada al tiempo.
+263: 
+264:     `source` selecciona la fuente de precio: "binance" (BTC/USDT, para el bot de 1h) o
+265:     "coinbase" (BTC/USD, para 5m/15m, que es el par que usa la resolución por Chainlink).
+266: 
+267:     Devuelve {elapsed_min: {drop_limit: prob}} solo con buckets que tengan muestras
+268:     suficientes y ventaja estadística real (prob > 0.5).
+269:     """
+270:     sub_intervalo, paso, checkpoints, win_min = _SUB_CONFIG[interval]
+271:     window_ms = win_min * 60000
+272:     sub_ms = paso * 60000
+273: 
+274:     candles = descargar_velas(interval=sub_intervalo, days=days, source=source)
+275: 
+276:     # Agrupar sub-velas por ventana padre, en orden temporal.
+277:     ventanas = defaultdict(list)
+278:     for c in candles:
+279:         open_time = c[0]
+280:         wk = (open_time // window_ms) * window_ms
+281:         ventanas[wk].append((open_time, float(c[1]), float(c[3]), float(c[4])))  # t, open, low, close
+282: 
+283:     # buckets[(elapsed, drop_limit)] = {'total':, 'up_wins':}
+284:     buckets = defaultdict(lambda: {"total": 0, "up_wins": 0})
+285:     completas = 0
+286: 
+287:     for wk, subs in ventanas.items():
+288:         subs.sort(key=lambda x: x[0])
+289:         n_esperadas = window_ms // sub_ms
+290:         if len(subs) < n_esperadas:
+291:             continue  # ventana incompleta
+292:         completas += 1
+293:         open_p = subs[0][1]
+294:         close_p = subs[-1][3]
+295:         if open_p == 0:
+296:             continue
+297:         cierre_up = close_p >= open_p
+298: 
+299:         running_low = open_p
+300:         for i, (_, _, low_p, _) in enumerate(subs):
+301:             if low_p < running_low:
+302:                 running_low = low_p
+303:             elapsed = (i + 1) * paso  # minutos transcurridos al cerrar esta sub-vela
+304:             if elapsed not in checkpoints:
+305:                 continue
+306:             caida_pct = (open_p - running_low) / open_p * 100
+307:             bucket = _drop_bucket(interval, caida_pct)
+308:             if bucket is None:
+309:                 continue
+310:             key = (elapsed, bucket)
+311:             buckets[key]["total"] += 1
+312:             if cierre_up:
+313:                 buckets[key]["up_wins"] += 1
+314: 
+315:     min_muestras = 15
+316:     tabla = {}
+317:     for (elapsed, bucket), stats in buckets.items():
+318:         if stats["total"] >= min_muestras:
+319:             prob = stats["up_wins"] / stats["total"]
+320:             if prob > 0.5:
+321:                 tabla.setdefault(elapsed, {})[bucket] = round(prob, 3)
+322: 
+323:     n_rangos = sum(len(v) for v in tabla.values())
+324:     print(f"⚙️  calib {interval}: {len(candles)} sub-velas · {completas} ventanas · "
+325:           f"{len(tabla)} checkpoints · {n_rangos} rangos con ventaja", flush=True)
+326:     return tabla
+327: 
+328: 
+329: def probabilidad_temporal(tabla, interval, elapsed_min, caida_pct):
+330:     """Busca P(UP) condicionada a (minutos transcurridos, caída acumulada).
+331: 
+332:     Ajusta `elapsed_min` a la rejilla de checkpoints del timeframe. Si todavía no
+333:     se alcanza el primer checkpoint o no hay bucket con ventaja, devuelve 0.0.
+334:     """
+335:     if not tabla:
+336:         return 0.0
+337:     _, paso, checkpoints, _ = _SUB_CONFIG[interval]
+338:     cp = (int(elapsed_min) // paso) * paso
+339:     if cp < checkpoints[0]:
+340:         return 0.0
+341:     if cp > checkpoints[-1]:
+342:         cp = checkpoints[-1]
+343:     fila = tabla.get(cp)
+344:     if not fila:
+345:         return 0.0
+346:     caida = round(caida_pct, 6)
+347:     for limite, prob in sorted(fila.items()):
+348:         if caida <= limite * 100:
+349:             return prob
+350:     return 0.0
+351: 
+352: 
+353: if __name__ == "__main__":
+354:     print("=" * 60)
+355:     print("PRUEBA DEL MÓDULO DE ANÁLISIS TEMPORAL")
+356:     print("=" * 60)
+357:     for interval in ["5m", "15m", "1h"]:
+358:         print(f"\n--- {interval} ---")
+359:         tabla = ejecutar_analisis_temporal(interval=interval, days=30)
+360:         for cp in sorted(tabla):
+361:             print(f"  +{cp}min -> {tabla[cp]}")
+</file>
+
+<file path="poly/bot_escucha.py">
+ 1: import asyncio
+ 2: import aiohttp
+ 3: import json
+ 4: from datetime import datetime, timezone, timedelta
+ 5: 
+ 6: # CONFIGURACIÓN DEL ALGORITMO QUANT
+ 7: BINANCE_API = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+ 8: 
+ 9: def generar_slug_mercado_actual():
+10:     """Genera automáticamente el slug del mercado de 1 hora actual de Polymarket."""
+11:     # Polymarket usa hora del Este (ET). Asumimos EDT (UTC-4) que es el estándar actual.
+12:     ahora_et = datetime.now(timezone.utc) - timedelta(hours=4)
+13:     
+14:     meses = ["january", "february", "march", "april", "may", "june", 
+15:              "july", "august", "september", "october", "november", "december"]
+16:     
+17:     mes = meses[ahora_et.month - 1]
+18:     dia = ahora_et.day
+19:     anio = ahora_et.year
+20:     hora = ahora_et.hour
+21:     
+22:     # Convertir a formato 12h con am/pm (ej. 2pm, 12am)
+23:     sufijo = "am" if hora < 12 else "pm"
+24:     hora_12 = hora if 1 <= hora <= 12 else abs(hora - 12)
+25:     
+26:     return f"bitcoin-up-or-down-{mes}-{dia}-{anio}-{hora_12}{sufijo}-et"
+27: 
+28: # El script ahora usa el slug generado dinámicamente
+29: MARKET_SLUG = generar_slug_mercado_actual()
+30: POLYMARKET_GAMMA_API = f"https://gamma-api.polymarket.com/events?slug={MARKET_SLUG}"
+31: 
+32: async def obtener_datos_mercado(session, slug_objetivo):
+33:     """Función auxiliar para intentar obtener datos de un slug específico."""
+34:     api_url = f"https://gamma-api.polymarket.com/events?slug={slug_objetivo}"
+35:     async with session.get(api_url) as resp:
+36:         gamma_data = await resp.json()
+37:         if gamma_data and len(gamma_data) > 0:
+38:             event = gamma_data[0]
+39:             markets = event.get('markets', [])
+40:             if markets and len(markets) > 0:
+41:                 mercado = markets[0]
+42:                 precios = json.loads(mercado.get('outcomePrices', '[]'))
+43:                 return {
+44:                     'pregunta': mercado.get('question'),
+45:                     'precio_up': float(precios[0]) if len(precios) > 0 else 0.0,
+46:                     'precio_down': float(precios[1]) if len(precios) > 1 else 0.0,
+47:                     'encontrado': True
+48:                 }
+49:     return {'encontrado': False}
+50: 
+51: async def monitorear_mercado_automatico():
+52:     print("🚀 Iniciando monitoreo automático de mercados de 1 hora...")
+53:     print("⏳ El bot calculará automáticamente la hora actual y la siguiente.\n")
+54:     
+55:     async with aiohttp.ClientSession() as session:
+56:         for i in range(3):
+57:             try:
+58:                 # 1. Precio real de referencia (Binance)
+59:                 async with session.get(BINANCE_API) as resp:
+60:                     binance_data = await resp.json()
+61:                     precio_btc = float(binance_data['price'])
+62: 
+63:                 # 2. Intentar obtener el mercado de la hora actual
+64:                 slug_actual = generar_slug_mercado_actual()
+65:                 datos = await obtener_datos_mercado(session, slug_actual)
+66:                 
+67:                 # 3. Si no existe, intentar con la siguiente hora (transición de hora)
+68:                 if not datos['encontrado']:
+69:                     # Calculamos el slug de la siguiente hora sumando 1 hora a la lógica
+70:                     # (Simplificación: intentamos un patrón común de fallback o avisamos)
+71:                     print(f"--- Ciclo {i+1}/3 ---")
+72:                     print(f"💰 Binance (Precio Real): ${precio_btc:,.2f} USD")
+73:                     print(f"⏳ Polymarket: El mercado de la hora actual ({slug_actual}) aún no está activo o cerró.")
+74:                     print("   💡 El bot intentará nuevamente en el próximo ciclo.")
+75:                 else:
+76:                     print(f"--- Ciclo {i+1}/5 ---")
+77:                     print(f"💰 Binance (Precio Real): ${precio_btc:,.2f} USD")
+78:                     print(f"🎲 Polymarket: {datos['pregunta']}")
+79:                     print(f"📈 Acción 'Up' (Arriba):  {datos['precio_up'] * 100:.1f}% (Precio: ${datos['precio_up']:.2f})")
+80:                     print(f"📉 Acción 'Down' (Abajo): {datos['precio_down'] * 100:.1f}% (Precio: ${datos['precio_down']:.2f})")
+81:                     
+82:                     # Aquí irá tu lógica de discrepancia cuantitativa en el próximo paso
+83:                 
+84:                 print()
+85:                 await asyncio.sleep(5) # Esperamos 5 segundos entre ciclos
+86:                 
+87:             except Exception as e:
+88:                 print(f"⚠️ Error en el ciclo {i+1}: {e}")
+89:                 await asyncio.sleep(5)
+90:                 
+91:     print("✅ Monitoreo completado. El sistema es 100% autónomo.")
+92: 
+93: if __name__ == "__main__":
+94:     asyncio.run(monitorear_mercado_automatico())
+</file>
+
+<file path="poly/cli_util.py">
+  1: """Salida CLI con iconos (en español) y parseo de mercados de Polymarket."""
+  2: import json
+  3: from datetime import datetime, timezone, timedelta
+  4: 
+  5: 
+  6: def _p(icono, tf, msg):
+  7:     print(f"{icono} [{tf:>3}] {msg}", flush=True)
+  8: 
+  9: 
+ 10: def init(tf, msg):
+ 11:     _p("⚙️ ", tf, msg)
+ 12: 
+ 13: 
+ 14: def aviso(tf, msg):
+ 15:     _p("⚠️ ", tf, msg)
+ 16: 
+ 17: 
+ 18: def ventana(tf, msg):
+ 19:     _p("🕒", tf, msg)
+ 20: 
+ 21: 
+ 22: def senal(tf, msg):
+ 23:     _p("🔴", tf, msg)
+ 24: 
+ 25: 
+ 26: def resultado(tf, gano, msg):
+ 27:     _p("🟢" if gano else "🔴", tf, msg)
+ 28: 
+ 29: 
+ 30: def resumen_final(tf, wins, losses, pnl_total):
+ 31:     total = wins + losses
+ 32:     if total == 0:
+ 33:         init(tf, "detenido (sin señales)")
+ 34:         return
+ 35:     tasa = wins / total * 100
+ 36:     icono = "🟢" if pnl_total >= 0 else "🔴"
+ 37:     estado = "GANANCIA" if pnl_total >= 0 else "PÉRDIDA"
+ 38:     _p(icono, tf, f"RESUMEN  {total} señales · {wins}W/{losses}L ({tasa:.0f}%) · {estado} neta {pnl_total:+.2f} u")
+ 39: 
+ 40: 
+ 41: def registrar_resultado(tf, apertura_ant, cierre_ant, senal_ant, precio_up, wins, losses, pnl_total):
+ 42:     """Resuelve la señal de la ventana anterior y actualiza contadores y P&L.
+ 43: 
+ 44:     P&L en "unidades" de Polymarket: comprar UP a `precio_up`; si gana paga 1.0
+ 45:     (beneficio 1-precio_up), si pierde se pierde lo pagado (-precio_up).
+ 46:     Devuelve (wins, losses, pnl_total, etiqueta) donde etiqueta es "WIN"/"LOSS"/None.
+ 47:     """
+ 48:     if not (senal_ant and apertura_ant and cierre_ant):
+ 49:         return wins, losses, pnl_total, None
+ 50:     gano = cierre_ant >= apertura_ant
+ 51:     if gano:
+ 52:         wins += 1
+ 53:         pnl = 1.0 - precio_up
+ 54:         etiqueta = "WIN"
+ 55:         texto = "GANÓ"
+ 56:     else:
+ 57:         losses += 1
+ 58:         pnl = -precio_up
+ 59:         etiqueta = "LOSS"
+ 60:         texto = "PERDIÓ"
+ 61:     pnl_total += pnl
+ 62:     total = wins + losses
+ 63:     tasa = wins / total * 100 if total else 0
+ 64:     resultado(tf, gano, f"{texto}  ${apertura_ant:,.0f}→${cierre_ant:,.0f} · "
+ 65:                         f"aciertos {wins}/{total} ({tasa:.0f}%) · P&L {pnl:+.2f} (acum {pnl_total:+.2f})")
+ 66:     return wins, losses, pnl_total, etiqueta
+ 67: 
+ 68: 
+ 69: def _to_float(*valores):
+ 70:     for v in valores:
+ 71:         if v:
+ 72:             try:
+ 73:                 return float(v)
+ 74:             except (TypeError, ValueError):
+ 75:                 continue
+ 76:     return 0.0
+ 77: 
+ 78: 
+ 79: def parse_mercado(event):
+ 80:     """Extrae (precio_up, volumen, liquidez) de un evento de Polymarket.
+ 81: 
+ 82:     Lee los campos a NIVEL DE MERCADO (volumeNum / liquidityNum), que son los reales.
+ 83:     El volumen/liquidez a nivel de evento suele venir casi vacio para mercados
+ 84:     de corta duracion y NO debe usarse como fuente primaria.
+ 85:     """
+ 86:     markets = event.get("markets") or []
+ 87:     if not markets:
+ 88:         return 0.0, 0.0, 0.0
+ 89:     m = markets[0]
+ 90:     try:
+ 91:         precios = json.loads(m.get("outcomePrices", "[]"))
+ 92:     except (TypeError, ValueError):
+ 93:         precios = []
+ 94:     precio_up = float(precios[0]) if precios else 0.0
+ 95:     volumen = _to_float(m.get("volumeNum"), m.get("volume24hr"), event.get("volume24hr"))
+ 96:     liquidez = _to_float(m.get("liquidityNum"), m.get("liquidity"), event.get("liquidity"))
+ 97:     return precio_up, volumen, liquidez
+ 98: 
+ 99: 
+100: def token_up(event):
+101:     """Devuelve el clobTokenId del outcome 'UP' (el primero), o None."""
+102:     markets = event.get("markets") or []
+103:     if not markets:
+104:         return None
+105:     try:
+106:         toks = json.loads(markets[0].get("clobTokenIds", "[]"))
+107:     except (TypeError, ValueError):
+108:         toks = []
+109:     return toks[0] if toks else None
+110: 
+111: 
+112: _GRAN_COINBASE = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
+113: 
+114: 
+115: async def _binance_klines(session, interval, limit=None, start_ms=None):
+116:     """Velas de Binance normalizadas a [t_ms, open, high, low, close], ascendente."""
+117:     url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={interval}"
+118:     if start_ms is not None:
+119:         url += f"&startTime={int(start_ms)}"
+120:     url += f"&limit={int(limit) if limit else 1000}"
+121:     async with session.get(url) as resp:
+122:         data = await resp.json()
+123:     return [[c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4])] for c in data]
+124: 
+125: 
+126: async def _coinbase_klines(session, interval, limit=None, start_dt=None, end_dt=None):
+127:     """Velas de Coinbase (BTC-USD) normalizadas a [t_ms, open, high, low, close], ascendente."""
+128:     gran = _GRAN_COINBASE.get(interval, 60)
+129:     url = f"https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity={gran}"
+130:     if start_dt is not None:
+131:         end_dt = end_dt or datetime.now(timezone.utc)
+132:         url += f"&start={start_dt.isoformat()}&end={end_dt.isoformat()}"
+133:     async with session.get(url) as resp:
+134:         data = await resp.json()
+135:     # Coinbase: [time_s, low, high, open, close, volume], más reciente primero.
+136:     norm = [[c[0] * 1000, c[3], c[2], c[1], c[4]] for c in data]
+137:     norm.sort(key=lambda x: x[0])
+138:     if limit and not start_dt:
+139:         norm = norm[-int(limit):]
+140:     return norm
+141: 
+142: 
+143: async def precio_vivo(session, source="binance"):
+144:     """Precio actual de BTC en la fuente indicada. Devuelve float o None."""
+145:     try:
+146:         if source == "coinbase":
+147:             url = "https://api.exchange.coinbase.com/products/BTC-USD/ticker"
+148:             async with session.get(url) as resp:
+149:                 return float((await resp.json())["price"])
+150:         url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+151:         async with session.get(url) as resp:
+152:             return float((await resp.json())["price"])
+153:     except Exception:
+154:         return None
+155: 
+156: 
+157: async def precio_frontera(session, frontera_dt, source="binance"):
+158:     """Precio EXACTO de BTC en el instante 'frontera_dt' (inicio/fin de ventana).
+159: 
+160:     Determinista: usa la APERTURA de la vela de 1m que empieza en esa frontera. No
+161:     depende de a qué segundo concreto consulte cada bot, así todos obtienen el MISMO
+162:     precio de cierre para la misma frontera (corrige el desfase del ticker en vivo).
+163:     Usa la misma fuente que la resolución del mercado. Devuelve float o None.
+164:     """
+165:     try:
+166:         if source == "coinbase":
+167:             fin = frontera_dt + timedelta(minutes=1)
+168:             velas = await _coinbase_klines(session, "1m", start_dt=frontera_dt, end_dt=fin)
+169:             for v in velas:
+170:                 if v[0] == int(frontera_dt.timestamp() * 1000):
+171:                     return v[1]
+172:             return velas[0][1] if velas else None
+173:         velas = await _binance_klines(session, "1m", limit=1, start_ms=int(frontera_dt.timestamp() * 1000))
+174:         return velas[0][1] if velas else None
+175:     except Exception:
+176:         return None
+177: 
+178: 
+179: async def apertura_y_minimo(session, inicio_ventana, source="binance"):
+180:     """(apertura, minimo) reales de la ventana usando velas de 1m desde su inicio.
+181: 
+182:     Evita inicializar el minimo a la apertura cuando el bot arranca a mitad de ventana
+183:     (lo que generaba una caída 0.00% falsa). Usa la fuente de resolución del mercado.
+184:     """
+185:     try:
+186:         if source == "coinbase":
+187:             velas = await _coinbase_klines(session, "1m", start_dt=inicio_ventana)
+188:         else:
+189:             velas = await _binance_klines(session, "1m", limit=120,
+190:                                           start_ms=int(inicio_ventana.timestamp() * 1000))
+191:         if velas:
+192:             apertura = velas[0][1]
+193:             minimo = min(v[3] for v in velas)
+194:             return apertura, minimo
+195:     except Exception:
+196:         pass
+197:     return None, None
+198: 
+199: 
+200: async def tendencia_pct(session, minutos, source="binance"):
+201:     """Cambio % de BTC en los últimos 'minutos' (régimen de mercado).
+202: 
+203:     Negativo fuerte = caída libre, donde la reversión a la media de micro-caídas
+204:     deja de funcionar. Devuelve el % de cambio (último close vs primer open) o 0.0.
+205:     """
+206:     try:
+207:         if source == "coinbase":
+208:             ini = datetime.now(timezone.utc) - timedelta(minutes=int(minutos))
+209:             velas = await _coinbase_klines(session, "1m", start_dt=ini)
+210:         else:
+211:             velas = await _binance_klines(session, "1m", limit=int(minutos))
+212:         if velas and len(velas) >= 2:
+213:             apertura = velas[0][1]
+214:             cierre = velas[-1][4]
+215:             if apertura:
+216:                 return (cierre - apertura) / apertura * 100
+217:     except Exception:
+218:         pass
+219:     return 0.0
+220: 
+221: 
+222: async def mejor_ask_clob(session, token_id):
+223:     """Precio EJECUTABLE para COMPRAR UP: mejor (menor) ask del order book del CLOB.
+224: 
+225:     Devuelve (precio_ask, tamano_disponible) o (0.0, 0.0) si no hay libro.
+226:     Es más realista que outcomePrices (que es un punto medio): es lo que de verdad
+227:     pagarías al entrar al mercado.
+228:     """
+229:     if not token_id:
+230:         return 0.0, 0.0
+231:     try:
+232:         url = f"https://clob.polymarket.com/book?token_id={token_id}"
+233:         async with session.get(url) as resp:
+234:             book = await resp.json()
+235:         asks = book.get("asks") or []
+236:         if not asks:
+237:             return 0.0, 0.0
+238:         mejor = min(asks, key=lambda a: float(a["price"]))
+239:         return float(mejor["price"]), float(mejor.get("size", 0.0))
+240:     except Exception:
+241:         return 0.0, 0.0
+242: 
+243: 
+244: async def simular_fill_clob(session, token_id, tamano_orden):
+245:     """Simula el fill REAL de una orden de mercado de COMPRA de 'tamano_orden' unidades
+246:     de UP, caminando el order book del CLOB nivel a nivel (de menor a mayor precio).
+247: 
+248:     Devuelve (precio_promedio, tamano_llenado, llenado_completo, niveles, mejor_ask):
+249:       - precio_promedio : VWAP de ejecución (lo que pagarías de media por unidad).
+250:       - tamano_llenado  : cuántas unidades se pudieron llenar (≤ tamano_orden).
+251:       - llenado_completo: True si se llenó toda la orden.
+252:       - niveles         : cuántos niveles del libro tuvo que barrer.
+253:       - mejor_ask       : precio del primer nivel (referencia/punto de partida).
+254: 
+255:     Esto modela el slippage real: una orden grande "come" varios niveles y paga un
+256:     precio promedio peor que el mejor ask. Todo es de SOLO LECTURA (gratis).
+257:     """
+258:     if not token_id or tamano_orden <= 0:
+259:         return 0.0, 0.0, False, 0, 0.0
+260:     try:
+261:         url = f"https://clob.polymarket.com/book?token_id={token_id}"
+262:         async with session.get(url) as resp:
+263:             book = await resp.json()
+264:         asks = book.get("asks") or []
+265:         if not asks:
+266:             return 0.0, 0.0, False, 0, 0.0
+267: 
+268:         niveles_ord = sorted(
+269:             ((float(a["price"]), float(a.get("size", 0.0))) for a in asks),
+270:             key=lambda x: x[0],
+271:         )
+272:         mejor_ask = niveles_ord[0][0]
+273: 
+274:         restante = float(tamano_orden)
+275:         costo = 0.0
+276:         llenado = 0.0
+277:         niveles_usados = 0
+278:         for precio, size in niveles_ord:
+279:             if restante <= 0:
+280:                 break
+281:             toma = min(restante, size)
+282:             costo += toma * precio
+283:             llenado += toma
+284:             restante -= toma
+285:             niveles_usados += 1
+286: 
+287:         if llenado <= 0:
+288:             return 0.0, 0.0, False, 0, mejor_ask
+289:         precio_promedio = costo / llenado
+290:         llenado_completo = restante <= 1e-9
+291:         return precio_promedio, llenado, llenado_completo, niveles_usados, mejor_ask
+292:     except Exception:
+293:         return 0.0, 0.0, False, 0, 0.0
+</file>
+
+<file path="poly/COMO_FUNCIONA.md">
+  1: # 🤖 Cómo Funciona el Bot — Explicación Detallada
+  2: 
+  3: Este documento explica, paso a paso y en lenguaje claro, **qué hace el bot**, **de dónde saca los datos**, **cómo decide que hay una señal** y **cómo esa señal se traduce en ganar (o perder) dinero**.
+  4: 
+  5: ---
+  6: 
+  7: ## 1. La Idea Central (en una frase)
+  8: 
+  9: > El bot busca momentos en los que el mercado de Polymarket **paga de más** por apostar a que Bitcoin sube, comparado con la probabilidad **real** de que suba, calculada a partir del historial de precios de Binance.
+ 10: 
+ 11: Cuando lo que el mercado te paga es mejor que el riesgo real que corres, existe **valor esperado positivo (EV+)**. El bot apuesta solo en esos momentos. A largo plazo, apostar siempre que hay EV+ es lo que genera ganancia.
+ 12: 
+ 13: ---
+ 14: 
+ 15: ## 2. El Concepto de Reversión a la Media
+ 16: 
+ 17: La estrategia se basa en un patrón estadístico llamado **reversión a la media**:
+ 18: 
+ 19: - Bitcoin abre una ventana de tiempo (5, 15 o 60 minutos) a un precio de apertura.
+ 20: - Si durante la ventana el precio **baja muy poquito** respecto a la apertura, históricamente tiende a **recuperarse y cerrar por encima** de la apertura.
+ 21: - Es decir: una caída **pequeña** es señal de que probablemente **rebote hacia arriba**.
+ 22: 
+ 23: ⚠️ Pero hay un matiz crucial: esto **solo es cierto si la caída es muy pequeña**. Si la caída es grande, ya no rebota — al contrario, suele seguir cayendo. Por eso el bot mide con mucho cuidado **cuánto** ha caído.
+ 24: 
+ 25: ---
+ 26: 
+ 27: ## 3. Los 3 Bots (timeframes)
+ 28: 
+ 29: El sistema corre **3 bots en paralelo**, uno por cada duración de mercado que existe en Polymarket:
+ 30: 
+ 31: | Bot | Ventana | Frecuencia de chequeo |
+ 32: | :--- | :--- | :--- |
+ 33: | 5m  | 5 minutos  | cada 30 segundos |
+ 34: | 15m | 15 minutos | cada 1 minuto |
+ 35: | 1h  | 1 hora     | cada 1 minuto |
+ 36: 
+ 37: Todos funcionan igual; solo cambia la duración de la ventana y cada cuánto miran el precio. El `master_bot.py` los lanza juntos y muestra todo en una sola terminal.
+ 38: 
+ 39: > Nota: existía un bot de 4 horas, pero **se retiró** porque Polymarket no publica ese mercado (no se puede operar ahí).
+ 40: 
+ 41: ---
+ 42: 
+ 43: ## 4. Las 4 Fuentes de Datos
+ 44: 
+ 45: El bot combina dos plataformas:
+ 46: 
+ 47: ### A) Binance — el precio real de Bitcoin
+ 48: - **Precio en vivo**: `api.binance.com/.../ticker/price?symbol=BTCUSDT`
+ 49: - **Historial (velas)**: `api.binance.com/.../klines` — descarga 30 días de velas de 1 minuto (o 5 minutos para el bot de 1h) para calibrar las probabilidades.
+ 50: - Binance es además la **fuente oficial de resolución** de los mercados de Polymarket: quien gana la apuesta se decide según el precio de Binance.
+ 51: 
+ 52: ### B) Coinbase / Binance — el precio real de Bitcoin según el par correcto
+ 53: Cada bot usa **la misma fuente que usa Polymarket para resolver su mercado**:
+ 54: - **Bot de 1h** → **Binance BTC/USDT** (su mercado se resuelve con la vela 1H de Binance).
+ 55: - **Bots de 5m y 15m** → **Coinbase BTC/USD** (su mercado se resuelve con Chainlink BTC/**USD**, un par USD).
+ 56: 
+ 57: De aquí sale: el precio en vivo, el histórico de 30 días para calibrar, el mínimo de la ventana y el precio de cierre exacto en la frontera.
+ 58: 
+ 59: ### C) Polymarket — dónde se apuesta
+ 60: - **API de eventos (Gamma)**: `gamma-api.polymarket.com/events?slug=...` — da la **liquidez**, el **volumen** y los identificadores de las acciones (tokens).
+ 61: - **API del order book (CLOB)**: `clob.polymarket.com/book?token_id=...` — da **todos los niveles de venta (asks)**. El bot **simula el fill real** de una orden de 100 unidades caminando esos niveles del más barato al más caro, calculando el **precio promedio ponderado (VWAP)**: lo que **de verdad pagarías** considerando el slippage. Es de **solo lectura (gratis)**, no envía órdenes.
+ 62: 
+ 63: ### Por qué importa el par (USD vs USDT) — corregido
+ 64: La resolución de 5m/15m es **Chainlink BTC/USD** (par USD). Binance BTC/**USDT** está sesgado **+0.15%** respecto al par USD, y ese sesgo es **mayor** que el umbral de caída de 5m (0.05%), así que usar Binance ahí daba predicciones equivocadas. Ahora 5m/15m usan **Coinbase BTC/USD** (mismo par USD que la resolución; las fuentes USD coinciden dentro de ~0.03%). Chainlink Data Streams no es de acceso libre, y Coinbase es la mejor aproximación gratuita.
+ 65: 
+ 66: ### Hora de cierre y precio de cierre exacto
+ 67: - Los mercados resuelven **en la frontera exacta** de la ventana (no cierran antes).
+ 68: - El precio de cierre se toma de la **vela en la frontera** (determinista) de la fuente correcta, no del precio en vivo. Así todos los bots usan exactamente el mismo número y coincide con lo que usa Polymarket.
+ 69: 
+ 70: ---
+ 71: 
+ 72: ## 5. Cómo Calibra el Bot (la "inteligencia")
+ 73: 
+ 74: Antes de operar, cada bot descarga **30 días de historial** de Binance y construye una **tabla de probabilidad condicionada al tiempo**.
+ 75: 
+ 76: ### ¿Qué significa "condicionada al tiempo"?
+ 77: 
+ 78: Esta es la parte más importante y la que hace que el bot sea honesto consigo mismo.
+ 79: 
+ 80: Una versión ingenua diría: *"si la caída total de la ventana fue ≤0.05%, cerró arriba el 71% de las veces"*. **Eso es trampa** (se llama *look-ahead bias*), porque al **principio** de la ventana tú **todavía no sabes** cuánto va a caer en total. Estarías usando información del futuro.
+ 81: 
+ 82: La tabla real responde la pregunta correcta:
+ 83: 
+ 84: > *"Han pasado **E minutos** desde que abrió la ventana, y hasta **ahora** la caída acumulada es **≤X%**. Históricamente, ¿qué porcentaje de veces cerró arriba?"*
+ 85: 
+ 86: ### Ejemplo real (bot de 5m, caída ≤0.05%)
+ 87: 
+ 88: | Minutos transcurridos | Probabilidad de cerrar UP |
+ 89: | :--- | :--- |
+ 90: | +1 min | 53.7% |
+ 91: | +2 min | 58.2% |
+ 92: | +3 min | 62.8% |
+ 93: | +4 min | 67.4% |
+ 94: 
+ 95: Conclusión: la ventaja **no existe al abrir la ventana**, va **creciendo** conforme avanza el tiempo y el precio se mantiene sin caer. Por eso el bot **no emite señales al inicio** de la ventana.
+ 96: 
+ 97: Cómo se construye la tabla internamente:
+ 98: 1. Agrupa todas las velas de 1m de los últimos 30 días por la ventana a la que pertenecen.
+ 99: 2. Para cada ventana recorre minuto a minuto, llevando el **mínimo acumulado** hasta ese instante.
+100: 3. En cada "checkpoint" (minuto 1, 2, 3...) anota: *(minuto, rango de caída) → ¿cerró arriba sí/no?*.
+101: 4. Solo guarda los rangos con **al menos 15 muestras** y **probabilidad > 50%** (ventaja estadística real).
+102: 
+103: La tabla se **recalibra automáticamente cada 24 horas**.
+104: 
+105: ---
+106: 
+107: ## 6. El Ciclo de Monitoreo (qué hace en cada chequeo)
+108: 
+109: En cada vuelta (cada 30s–1min), el bot ejecuta estos pasos:
+110: 
+111: 1. **Identifica la ventana actual** (ej. 17:45→17:50) y su precio de apertura real, tomado de Binance.
+112: 2. **Calcula el mínimo real** alcanzado en lo que va de la ventana (usando las velas de 1m, no solo el precio actual). → *Esto evita falsas caídas de 0.00% si el bot arranca a mitad de ventana.*
+113: 3. **Mide la caída acumulada**: `(apertura − mínimo) / apertura`.
+114: 4. **Mide los minutos transcurridos** desde que abrió la ventana.
+115: 5. **Consulta la tabla temporal**: dado ese minuto y esa caída, ¿cuál es la probabilidad real de cerrar UP? (`prob`).
+116: 6. **Simula el fill ejecutable** de "UP": camina el order book del CLOB para una orden de 100 unidades y obtiene el precio promedio real (`fill` = VWAP).
+117: 7. **Aplica los filtros** (sección 7).
+118: 8. Si **todo pasa**, emite **una señal** (solo una por ventana) y la guarda en el CSV.
+119: 
+120: ---
+121: 
+122: ## 7. Los Filtros de Seguridad (cuándo SÍ hay señal)
+123: 
+124: Para que el bot dispare una señal 🔴, deben cumplirse **todas** estas condiciones:
+125: 
+126: | Filtro | Condición | Por qué |
+127: | :--- | :--- | :--- |
+128: | **Probabilidad con ventaja** | `prob > 0` en la tabla temporal | Solo hay señal si el momento/caída tiene ventaja estadística histórica real. |
+129: | **Una sola por ventana** | señal aún no registrada | Evita disparar 10 veces en la misma ventana. |
+130: | **Precio mínimo válido** | `fill ≥ $0.01` | Descarta mercados sin datos reales (precio $0.00). |
+131: | **Liquidez mínima** | `liquidez ≥ $5,000` | Garantiza que el mercado tiene profundidad para entrar/salir sin slippage extremo. |
+132: | **Orden completamente llenada** | se puede llenar las 100 unidades caminando el libro | Si el order book no tiene profundidad para tu orden completa, no hay señal: evita operar donde solo cabe una migaja al precio mostrado. |
+133: | **Fill por profundidad (VWAP)** | `precio_entrada = VWAP + 0.01` | El precio de entrada es el **promedio ponderado** de barrer el libro (modela el slippage real: una orden grande come varios niveles), más un pequeño colchón de fee. |
+134: | **Valor esperado mínimo** | `EV ≥ 5%` | El margen tiene que cubrir comisiones y el slippage ya modelado, y aún dejar ganancia. |
+135: | **Régimen de mercado** | No operar en caída libre | Si BTC viene cayendo fuerte en el lookback reciente (5m: <−0.6% en 60m, 15m: <−0.8% en 90m, 1h: <−2% en 6h), la reversión de micro-caídas falla, así que el bot **se abstiene**. |
+136: 
+137: El corazón del filtro es el **EV**:
+138: 
+139: ```
+140: EV = prob − precio_entrada       (precio_entrada = VWAP del fill + fee)
+141: ```
+142: 
+143: - `prob`          = probabilidad real de ganar (de la tabla histórica), ej. 0.63.
+144: - `precio_entrada` = lo que de verdad pagarías por "UP" tras el slippage, ej. 0.52.
+145: - `EV`            = 0.63 − 0.52 = **+0.11 → +11%**.
+146: 
+147: Si el EV es ≥ 5%, significa que **el mercado te está pagando más de lo que vale el riesgo real**. Esa es la señal de oro.
+148: 
+149: ---
+150: 
+151: ## 8. Cómo se Gana (o Pierde) Dinero — el P&L
+152: 
+153: ### La mecánica de la apuesta
+154: 
+155: En Polymarket compras una acción "UP" a un precio entre $0 y $1:
+156: - Si **aciertas** (Bitcoin cierra ≥ apertura), tu acción vale **$1.00**.
+157: - Si **fallas** (Bitcoin cierra < apertura), tu acción vale **$0.00**.
+158: 
+159: ### El cálculo de ganancia/pérdida (por unidad)
+160: 
+161: Si compraste "UP" a un `precio_entrada` (el fill real, VWAP + fee):
+162: 
+163: | Resultado | Fórmula | Ejemplo (precio = $0.52) |
+164: | :--- | :--- | :--- |
+165: | **GANÓ** 🟢 | `+ (1.00 − precio_entrada)` | +$0.48 |
+166: | **PERDIÓ** 🔴 | `− precio_entrada` | −$0.52 |
+167: 
+168: Por eso conviene comprar **barato** (precio bajo) con **alta probabilidad** (prob alta): ganas mucho cuando aciertas y arriesgas poco.
+169: 
+170: ### Por qué el EV+ gana a largo plazo
+171: 
+172: El valor esperado por apuesta es:
+173: 
+174: ```
+175: Ganancia esperada = prob × (1 − precio_entrada) − (1 − prob) × precio_entrada = prob − precio_entrada = EV
+176: ```
+177: 
+178: Si **siempre** apuestas con EV ≥ 5%, en promedio ganas 5 centavos por cada dólar arriesgado, **aunque pierdas algunas apuestas individuales**. La estadística juega a tu favor con el volumen de operaciones.
+179: 
+180: ### Cómo lo verifica el bot (paper trading)
+181: 
+182: El bot **no usa dinero real** (es simulación/"paper trading"). Cuando se abre la **siguiente** ventana, mira el cierre de la anterior:
+183: 
+184: 1. Compara el **cierre** con la **apertura** de la ventana donde hubo señal.
+185: 2. Si cierre ≥ apertura → **WIN** 🟢; si no → **LOSS** 🔴.
+186: 3. Suma el P&L (`+1−precio_entrada` o `−precio_entrada`) al acumulado.
+187: 4. Lo registra en el CSV y lo muestra en pantalla.
+188: 
+189: ---
+190: 
+191: ## 9. Qué Verás en la Terminal
+192: 
+193: ```
+194: ⚙️  [ 5m] calibrando 30 días (probabilidad por minuto)…
+195: ⚙️  calib 5m: 43201 sub-velas · 8640 ventanas · 4 checkpoints · 4 rangos con ventaja
+196: ⚙️  [ 5m] filtros: liquidez≥$5,000 · orden 100u · EV≥5% · fee 0.01 · ventana 5m
+197: 🕒 [ 5m] 17:35→17:40 · apertura $63,084.00 · cierre ant $63,001
+198: 🔴 [ 5m] SEÑAL · +3min · caída 0.03% · prob 63% · fill $0.520 (mejor $0.52 +slip $0.000/1niv +fee 0.01) · EV +10.7% · liq $10,063
+199: 🟢 [ 5m] GANÓ  $63,084→$63,120 · aciertos 1/1 (100%) · P&L +0.47 (acum +0.47)
+200: ```
+201: 
+202: | Icono | Significado |
+203: | :--- | :--- |
+204: | ⚙️ | Calibración / configuración |
+205: | 🕒 | Se abrió una nueva ventana |
+206: | 🔴 (SEÑAL) | ¡Oportunidad de compra detectada! |
+207: | 🟢 | La señal anterior **ganó** |
+208: | 🔴 (resultado) | La señal anterior **perdió** |
+209: 
+210: Al detener con `Ctrl+C`, cada bot muestra un resumen:
+211: 
+212: ```
+213: 🟢 [ 5m] RESUMEN  12 señales · 9W/3L (75%) · GANANCIA neta +2.40 u
+214: ```
+215: 
+216: ---
+217: 
+218: ## 10. El Registro CSV
+219: 
+220: Cada señal y su resultado se guardan en `senales_5m.csv`, `senales_15m.csv`, `senales_1h.csv`, con estas columnas:
+221: 
+222: | Columna | Qué guarda |
+223: | :--- | :--- |
+224: | Fecha/Hora | Momento exacto de la señal |
+225: | Ventana | Inicio de la ventana |
+226: | Min transcurrido | Minutos dentro de la ventana al detectar |
+227: | Apertura | Precio BTC al abrir la ventana |
+228: | Minimo | Mínimo alcanzado hasta ese momento |
+229: | Caída % | Caída acumulada |
+230: | Prob | Probabilidad real (tabla temporal) |
+231: | Precio entrada | Precio ejecutable real pagado (VWAP del fill + fee) |
+232: | Volumen | Volumen del mercado |
+233: | Liquidez | Profundidad del order book |
+234: | EV | Valor esperado de la operación |
+235: | Acción | "COMPRAR UP" |
+236: | Resultado | "WIN" o "LOSS" (se llena al cerrar la ventana) |
+237: 
+238: Los datos se **acumulan** entre ejecuciones (modo *append*), así que puedes dejar el bot corriendo días y analizar la tasa de acierto real después.
+239: 
+240: ---
+241: 
+242: ## 11. Resumen del Flujo Completo
+243: 
+244: ```
+245:    ┌─────────────────────────────────────────────────────────┐
+246:    │ 1. CALIBRAR: 30 días de Binance → tabla P(UP|minuto,caída)│
+247:    └─────────────────────────────────────────────────────────┘
+248:                               │
+249:                               ▼
+250:    ┌─────────────────────────────────────────────────────────┐
+251:    │ 2. CADA 30s–1min:                                        │
+252:    │    · precio BTC en vivo (Binance)                        │
+253:    │    · caída acumulada + minutos transcurridos             │
+254:    │    · prob = tabla temporal                               │
+255:    │    · fill = precio promedio real simulando la orden       │
+256:    │           (VWAP caminando el order book CLOB)             │
+257:    └─────────────────────────────────────────────────────────┘
+258:                               │
+259:                               ▼
+260:         ¿prob>0  Y  liquidez≥$5k  Y  orden llena  Y  EV≥5%?
+261:                        │  sí                 │  no
+262:                        ▼                     ▼
+263:             🔴 SEÑAL: COMPRAR UP        seguir monitoreando
+264:                        │
+265:                        ▼
+266:    ┌─────────────────────────────────────────────────────────┐
+267:    │ 3. AL CERRAR LA VENTANA: cierre ≥ apertura ?             │
+268:    │    sí → WIN (+1−precio)      no → LOSS (−precio)         │
+269:    │    actualizar P&L y guardar resultado en CSV            │
+270:    └─────────────────────────────────────────────────────────┘
+271: ```
+272: 
+273: ---
+274: 
+275: ## 12. Conceptos Clave en una Tabla
+276: 
+277: | Término | Significado simple |
+278: | :--- | :--- |
+279: | **Reversión a la media** | Una caída pequeña suele rebotar hacia arriba. |
+280: | **Probabilidad (prob)** | Qué tan seguido, en el historial, cerró arriba en esa misma situación. |
+281: | **Fill / VWAP** | Precio promedio real que pagas al barrer el order book con tu orden (incluye slippage). |
+282: | **EV (valor esperado)** | `prob − precio_entrada`. Si es positivo, el mercado te paga de más → conviene apostar. |
+283: | **Liquidez** | Dinero disponible en el mercado; evita que tu orden mueva mucho el precio. |
+284: | **Look-ahead bias** | El error de usar información del futuro; el bot lo evita con la tabla temporal. |
+285: | **Paper trading** | Simulación sin dinero real para validar la estrategia primero. |
+286: 
+287: ---
+288: 
+289: > **Filosofía del sistema:** no se trata de adivinar el futuro, sino de apostar **únicamente** cuando las matemáticas están a tu favor (EV positivo) y dejar que la **ley de los grandes números** convierta esa ventaja en ganancia con el tiempo.
+</file>
+
+<file path="poly/master_bot.py">
+  1: import subprocess
+  2: import time
+  3: import os
+  4: import fcntl
+  5: from datetime import datetime
+  6: 
+  7: SCRIPTS = {
+  8:     "1h": "/home/penguin/Documentos/poly/1_hora/paper_trading_bot.py",
+  9:     "15m": "/home/penguin/Documentos/poly/15_minutos/paper_trading_bot_15m.py",
+ 10:     "5m": "/home/penguin/Documentos/poly/5_minutos/paper_trading_bot_5m.py",
+ 11: }
+ 12: 
+ 13: CSVS = {
+ 14:     "1h": "/home/penguin/Documentos/poly/1_hora/senales_1h.csv",
+ 15:     "15m": "/home/penguin/Documentos/poly/15_minutos/senales_15m.csv",
+ 16:     "5m": "/home/penguin/Documentos/poly/5_minutos/senales_5m.csv",
+ 17: }
+ 18: 
+ 19: 
+ 20: def configurar_lectura_no_bloqueante(process):
+ 21:     fd = process.stdout.fileno()
+ 22:     fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+ 23:     fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+ 24: 
+ 25: 
+ 26: def leer_salida(process):
+ 27:     lineas = []
+ 28:     try:
+ 29:         while True:
+ 30:             line = process.stdout.readline()
+ 31:             if line:
+ 32:                 lineas.append(line.rstrip())
+ 33:             else:
+ 34:                 break
+ 35:     except (IOError, BlockingIOError):
+ 36:         pass
+ 37:     return lineas
+ 38: 
+ 39: 
+ 40: def rule(char="=", width=72):
+ 41:     print(char * width, flush=True)
+ 42: 
+ 43: 
+ 44: def main():
+ 45:     rule()
+ 46:     print("MASTER PAPER TRADING - MULTI TIMEFRAME", flush=True)
+ 47:     rule()
+ 48:     print(f"fecha    {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+ 49:     print(f"bots     {len(SCRIPTS)} ({', '.join(SCRIPTS)})", flush=True)
+ 50:     print("nota     cada bot auto-calibra al iniciar (~30-60s)", flush=True)
+ 51:     print("ctrl-c   detiene todos los bots", flush=True)
+ 52:     rule()
+ 53: 
+ 54:     processes = {}
+ 55: 
+ 56:     try:
+ 57:         for nombre, ruta in SCRIPTS.items():
+ 58:             if not os.path.exists(ruta):
+ 59:                 print(f"[master] ERROR archivo no encontrado: {ruta}", flush=True)
+ 60:                 continue
+ 61:             process = subprocess.Popen(
+ 62:                 ["python3", "-u", ruta],
+ 63:                 stdout=subprocess.PIPE,
+ 64:                 stderr=subprocess.STDOUT,
+ 65:                 text=True,
+ 66:                 bufsize=1,
+ 67:             )
+ 68:             configurar_lectura_no_bloqueante(process)
+ 69:             processes[nombre] = process
+ 70:             print(f"[master] iniciado {nombre} (pid {process.pid})", flush=True)
+ 71:             time.sleep(2)
+ 72: 
+ 73:         print(f"[master] {len(processes)} bots corriendo\n", flush=True)
+ 74: 
+ 75:         while all(p.poll() is None for p in processes.values()):
+ 76:             for nombre, process in processes.items():
+ 77:                 for linea in leer_salida(process):
+ 78:                     print(linea, flush=True)
+ 79:             time.sleep(1)
+ 80: 
+ 81:         for nombre, process in processes.items():
+ 82:             if process.poll() is not None:
+ 83:                 print(f"[master] {nombre} termino (codigo {process.returncode})", flush=True)
+ 84:                 for linea in leer_salida(process):
+ 85:                     print(linea, flush=True)
+ 86: 
+ 87:     except KeyboardInterrupt:
+ 88:         print("\n[master] deteniendo todos los bots...", flush=True)
+ 89:         for nombre, process in processes.items():
+ 90:             if process.poll() is None:
+ 91:                 process.terminate()
+ 92:                 print(f"[master] {nombre} detenido", flush=True)
+ 93:         for process in processes.values():
+ 94:             process.wait()
+ 95:         print("[master] datos guardados en:", flush=True)
+ 96:         for nombre, ruta in CSVS.items():
+ 97:             print(f"[master]   {nombre}: {ruta}", flush=True)
+ 98: 
+ 99: 
+100: if __name__ == "__main__":
+101:     main()
+</file>
+
+<file path="poly/README.md">
+  1: # 📊 Sistema de Paper Trading Cuantitativo - Polymarket BTC
+  2: 
+  3: ## Resumen del Proyecto
+  4: 
+  5: Sistema automatizado de **Paper Trading** (simulación sin riesgo) para mercados de predicción de Bitcoin en Polymarket. El sistema utiliza análisis estadístico de datos históricos de Binance para calcular probabilidades reales de reversión a la media, y las compara con los precios de las acciones en Polymarket para detectar oportunidades de **Valor Esperado (EV) positivo**.
+  6: 
+  7: **Estado actual**: Sistema completo, probado y en fase de validación estadística.
+  8: 
+  9: ---
+ 10: 
+ 11: ## Arquitectura del Sistema
+ 12: 
+ 13: ### Estructura de Archivos
+ 14: 
+ 15: ```
+ 16: /home/penguin/Documentos/poly/
+ 17: ├── analisis_historico_modulo.py          # Módulo compartido: análisis temporal de Binance
+ 18: ├── cli_util.py                           # Salida CLI con iconos, P&L y CLOB de Polymarket
+ 19: ├── master_bot.py                         # Orquestador que lanza los 3 bots simultáneamente
+ 20: ├── README.md                             # Este archivo de contexto
+ 21: │
+ 22: ├── 1_hora/
+ 23: │   ├── paper_trading_bot.py              # Bot de 1 hora (auto-calibrable)
+ 24: │   ├── analisis_historico.py             # Script de análisis independiente
+ 25: │   └── senales_1h.csv                    # Datos acumulados de señales
+ 26: │
+ 27: ├── 15_minutos/
+ 28: │   ├── paper_trading_bot_15m.py          # Bot de 15 minutos (auto-calibrable)
+ 29: │   └── senales_15m.csv                  # Datos acumulados de señales
+ 30: │
+ 31: └── 5_minutos/
+ 32:     ├── paper_trading_bot_5m.py           # Bot de 5 minutos (auto-calibrable)
+ 33:     ├── analisis_historico_5m.py          # Script de análisis independiente
+ 34:     └── senales_5m.csv                   # Datos acumulados de señales
+ 35: ```
+ 36: 
+ 37: ### Flujo de Ejecución
+ 38: 
+ 39: 1. **Inicio**: Se ejecuta `master_bot.py` o un bot individual.
+ 40: 2. **Auto-calibración**: El bot descarga 30 días de datos de Binance para su intervalo específico.
+ 41: 3. **Cálculo de parámetros**: Analiza los datos históricos y construye una **tabla de probabilidad condicionada al tiempo** (P de cierre UP según los minutos transcurridos y la caída acumulada hasta ese momento).
+ 42: 4. **Monitoreo continuo**: Cada ciclo (30s-1min según el timeframe), el bot:
+ 43:    - Lee el precio actual de Binance.
+ 44:    - Calcula la caída acumulada desde la apertura de la ventana y los minutos transcurridos.
+ 45:    - Consulta la tabla temporal para obtener la probabilidad real condicionada al tiempo.
+ 46:    - Consulta el **precio ejecutable real** simulando el fill de una orden de `TAMANO_ORDEN` (100 unidades) caminando la profundidad del order book CLOB de "UP" (VWAP), lo que modela el slippage real.
+ 47:    - Aplica filtros de liquidez, llenado completo de la orden y EV.
+ 48:    - Si hay señal válida (una sola por ventana), la registra en el CSV.
+ 49: 5. **Re-calibración**: Cada 24 horas, el bot actualiza automáticamente sus parámetros.
+ 50: 
+ 51: ---
+ 52: 
+ 53: ## Parámetros del Sistema
+ 54: 
+ 55: ### Probabilidad Condicionada al Tiempo (corrige el sesgo de look-ahead)
+ 56: 
+ 57: El sistema **ya no** usa un único umbral de caída por timeframe. Eso medía la caída *máxima de toda la ventana* y aplicarlo en vivo era sesgo de look-ahead (al abrir la ventana la caída es ~0 pero aún no sabes cuánto caerá). Ahora se construye una tabla **P(UP | minutos transcurridos, caída acumulada)**.
+ 58: 
+ 59: Ejemplo real para 5m (caída acumulada ≤ 0.05%), que muestra por qué el viejo 71% estaba inflado:
+ 60: 
+ 61: | Minutos transcurridos | Probabilidad UP |
+ 62: | :--- | :--- |
+ 63: | +1 min | **53.7%** |
+ 64: | +2 min | 58.2% |
+ 65: | +3 min | 62.8% |
+ 66: | +4 min | 67.4% |
+ 67: 
+ 68: La ventaja real solo aparece avanzada la ventana, no al abrir. El bot no emite señal antes del primer checkpoint.
+ 69: 
+ 70: ### Filtros de Seguridad (Aplicados a todos los bots)
+ 71: 
+ 72: | Filtro | Valor | Justificación |
+ 73: | :--- | :--- | :--- |
+ 74: | **Liquidez mínima** | ≥ $5,000 USD | Profundidad del order book (`liquidityNum` de Polymarket). Métrica correcta para evitar slippage en mercados de corta duración, donde el "volumen 24h" es estructuralmente diminuto porque el mercado se recrea cada ventana. |
+ 75: | **Llenado completo de la orden** | Se debe poder llenar `TAMANO_ORDEN` (100 unidades) | Se simula barrer el order book del CLOB de menor a mayor precio. Si no hay profundidad para llenar las 100 unidades, no hay señal: evita operar donde solo puedes comprar una cantidad ínfima al precio mostrado. |
+ 76: | **Precio de entrada** | **VWAP del fill simulado** + colchón de fee | Se camina el order book real acumulando tamaño hasta llenar la orden y se calcula el **precio promedio ponderado (VWAP)** — esto modela el slippage real (una orden grande "come" varios niveles). Se suma un pequeño colchón `FEE` (0.01) por comisiones. Es **solo lectura / gratis**: no envía órdenes. |
+ 77: | **EV Neto mínimo** | ≥ 5% | Se calcula sobre el VWAP del fill **con** el colchón de fee, así que ya descuenta el deslizamiento real y las comisiones. |
+ 78: | **Filtro de régimen** | Sin operar si BTC cae mucho en el lookback | La reversión a la media de micro-caídas **deja de funcionar en caída libre**. Si la tendencia reciente es muy bajista (5m: <−0.6% en 60m · 15m: <−0.8% en 90m · 1h: <−2% en 6h), el bot no opera. |
+ 79: 
+ 80: ### Filtros Sniper (Evitar operaciones a último segundo)
+ 81: 
+ 82: | Timeframe | Ventana de pausa | Justificación |
+ 83: | :--- | :--- | :--- |
+ 84: | 1 Hora | Últimos 5 minutos | Evita ruido de cierre |
+ 85: | 15 Minutos | Últimos 2 minutos | Evita ruido de cierre |
+ 86: | 5 Minutos | Último minuto | Evita ruido de cierre |
+ 87: 
+ 88: ### Frecuencias de Monitoreo y Refresh
+ 89: 
+ 90: | Timeframe | Frecuencia de chequeo | Refresh de parámetros |
+ 91: | :--- | :--- | :--- |
+ 92: | 1 Hora | Cada 1 minuto | Cada 24 horas |
+ 93: | 15 Minutos | Cada 1 minuto | Cada 24 horas |
+ 94: | 5 Minutos | Cada 30 segundos | Cada 24 horas |
+ 95: 
+ 96: ---
+ 97: 
+ 98: ## Validación de Resultados en Tiempo Real
+ 99: 
+100: ### Cómo funciona la validación
+101: 
+102: Cada bot ahora valida automáticamente el resultado de las señales anteriores:
+103: 
+104: 1. **Al inicio de cada nueva ventana**, el bot verifica el resultado de la ventana anterior.
+105: 2. **Si hubo una señal**, compara el precio de cierre (el precio de Binance al momento exacto de cierre) con el precio de apertura.
+106: 3. **Si el cierre ≥ apertura**, la señal fue **GANADORA** ✅.
+107: 4. **Si el cierre < apertura**, la señal fue **PERDEDORA** ❌.
+108: 5. **Actualiza los contadores** de wins/losses y calcula la tasa de acierto acumulada.
+109: 6. **Imprime el resultado** en la terminal con la tasa de acierto actualizada.
+110: 7. **Registra el resultado** en el CSV en la columna "Resultado".
+111: 
+112: ### Estructura del CSV (Actualizada)
+113: 
+114: | Columna | Descripción |
+115: | :--- | :--- |
+116: | Fecha/Hora | Marca de tiempo exacta de la detección de la señal |
+117: | Ventana | Inicio de la ventana de tiempo (ej: "2026-06-03 22:30:00") |
+118: | Min transcurrido | Minutos transcurridos dentro de la ventana al detectar la señal |
+119: | Apertura | Precio de BTC al inicio de la ventana |
+120: | Minimo | Precio mínimo alcanzado hasta el momento de la señal |
+121: | Caída % | Caída acumulada desde la apertura hasta ese momento |
+122: | Prob | Probabilidad UP condicionada al tiempo (tabla temporal) |
+123: | Precio entrada | Precio ejecutable real = **VWAP del fill simulado** (order book CLOB) + fee |
+124: | Volumen | Volumen del mercado en Polymarket (`mercado.volumeNum`) |
+125: | Liquidez | Profundidad del order book (`mercado.liquidityNum`) — sobre esta se aplica el filtro |
+126: | EV | Valor Esperado neto (Prob − precio entrada) |
+127: | Acción | "COMPRAR UP" (señal de compra) |
+128: | **Resultado** | **"WIN" o "LOSS"** (se llena al cierre de la ventana) |
+129: 
+130: ### Ejemplo de salida en terminal (CLI con iconos)
+131: 
+132: ```
+133: ⚙️  [ 5m] calibrando 30 días (probabilidad por minuto)…
+134: ⚙️  calib 5m: 43201 sub-velas · 8640 ventanas · 4 checkpoints · 4 rangos con ventaja
+135: ⚙️  [ 5m] filtros: liquidez≥$5,000 · orden 100u · EV≥5% · fee 0.01 · ventana 5m
+136: 🕒 [ 5m] 17:35→17:40 · apertura $63,084.00 · cierre ant $63,001
+137: 🔴 [ 5m] SEÑAL · +3min · caída 0.03% · prob 63% · fill $0.520 (mejor $0.52 +slip $0.000/1niv +fee 0.01) · EV +10.7% · liq $10,063
+138: 🟢 [ 5m] GANÓ  $63,084→$63,120 · aciertos 1/1 (100%) · P&L +0.47 (acum +0.47)
+139: ```
+140: 
+141: - 🔴 señal (compra) · 🟢 ganó / 🔴 perdió al cerrar la ventana.
+142: - Solo se emite **una señal por ventana**.
+143: 
+144: ### Resumen final al detener el bot
+145: 
+146: Al presionar `Ctrl + C`, cada bot muestra un resumen con P&L neto (🟢 ganancia / 🔴 pérdida):
+147: 
+148: ```
+149: 🟢 [ 5m] RESUMEN  12 señales · 9W/3L (75%) · GANANCIA neta +2.40 u
+150: ```
+151: 
+152: El P&L se calcula en "unidades": comprar UP al precio de entrada paga 1.0 si gana (beneficio `1 − precio`) y pierde el precio pagado si pierde.
+153: 
+154: ---
+155: 
+156: ## Fuentes de Datos
+157: 
+158: Cada bot usa la **misma fuente de precio que la resolución de su mercado** (esto es clave para fidelidad):
+159: 
+160: | Timeframe | Fuente de resolución de Polymarket | Fuente de precio del bot | ¿Coinciden? |
+161: | :--- | :--- | :--- | :--- |
+162: | **1 Hora** | Binance BTC/**USDT**, vela 1H (`close ≥ open`) | Binance BTC/USDT | ✅ Exacto (misma) |
+163: | **5 Minutos** | **Chainlink BTC/USD** data stream | **Coinbase BTC/USD** | ✅ Mismo par USD (≈0.03%) |
+164: | **15 Minutos** | **Chainlink BTC/USD** data stream | **Coinbase BTC/USD** | ✅ Mismo par USD (≈0.03%) |
+165: 
+166: ### ¿Por qué Coinbase para 5m/15m?
+167: - La resolución de 5m/15m es **Chainlink BTC/USD**, que es un **agregado de mercados spot USD** (Coinbase, Kraken, Bitstamp). Esas fuentes USD coinciden entre sí dentro de **~0.03%**.
+168: - Binance BTC/**USDT** está sesgado **+0.15%** respecto al par USD (medido en vivo: +0.159%). Como ese sesgo es **mayor** que el umbral de caída de 5m (0.05%), usar Binance para 5m/15m introducía un error estructural que invertía señales.
+169: - **Chainlink Data Streams** no es de acceso libre (requiere credenciales con firma HMAC). **Coinbase BTC/USD** es la mejor aproximación gratuita: mismo par (USD), prácticamente sobre la mediana de las fuentes USD, y ofrece histórico de velas para calibrar.
+170: 
+171: ### Endpoints
+172: - **Binance** (bot 1h): `api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={i}` y `.../ticker/price`.
+173: - **Coinbase** (bots 5m/15m): `api.exchange.coinbase.com/products/BTC-USD/candles?granularity={s}` y `.../ticker`.
+174: - Sub-velas para la probabilidad por minuto: 1m (5m y 15m) y 5m (1h).
+175: 
+176: ### Polymarket (Precios de acciones UP/DOWN)
+177: - **API de eventos (gamma)**: `https://gamma-api.polymarket.com/events?slug={slug}` — da liquidez, volumen y `clobTokenIds`.
+178: - **API del order book (CLOB)**: `https://clob.polymarket.com/book?token_id={tokenId}` — da todos los niveles de `asks`. Se simula el **fill real** caminando esos niveles (VWAP) para una orden de 100 unidades. **Solo lectura, gratis**: no se envían órdenes ni se necesita wallet.
+179: - **Slugs de mercados**:
+180:   - 1 Hora: `bitcoin-up-or-down-{mes}-{dia}-{año}-{hora}am/pm-et`
+181:   - 5 Minutos: `btc-updown-5m-{timestamp_unix}`
+182:   - 15 Minutos: `btc-updown-15m-{timestamp_unix}`
+183: 
+184: ### Hora exacta de cierre
+185: - Los mercados resuelven **en la frontera exacta** de la ventana (ej. 5m: …:00, :05, :10; 1h: en punto), confirmado por los campos `startTime`/`endDate` del evento. **No cierran antes de tiempo.** Lo que puede detenerse un poco antes es la *aceptación de órdenes nuevas*, no el precio de resolución.
+186: - **Cierre determinista (corrige el bug de sincronización)**: el precio de cierre ya **no** se toma del *ticker* en vivo (que daba valores distintos en cada bot según el segundo de la consulta), sino de la **apertura de la vela de 1m en la frontera** (`precio_frontera`), en la fuente correspondiente. Así, todos los bots leen exactamente el mismo precio para la misma frontera. Verificado: a las 19:30 los bots de 15m y 5m leen idéntico $64,026.28 (Coinbase).
+187: 
+188: ---
+189: 
+190: ## Descubrimientos Clave del Análisis
+191: 
+192: ### 1. Patrón de Reversión a la Media (condicionado al tiempo)
+193: Existe un patrón de reversión, pero su fuerza **depende del momento de la ventana**. Una caída acumulada pequeña al inicio aporta poca ventaja; la ventaja crece a medida que avanza la ventana (ver tabla temporal de 5m: 53.7% a +1min → 67.4% a +4min).
+194: 
+195: ### 2. El Look-ahead Inflaba las Probabilidades
+196: El enfoque anterior (umbral sobre la caída máxima de toda la ventana) reportaba 71–87%, pero esos números no son alcanzables en vivo porque al abrir la ventana no se conoce la caída futura. La tabla temporal corrige esto.
+197: 
+198: ### 3. El Precio Ejecutable Importa (fill simulado por profundidad)
+199: `outcomePrices` es un punto medio; lo que pagas de verdad es peor. En vez de usar solo el mejor ask, se **simula el fill** de una orden de 100 unidades caminando el order book del CLOB nivel a nivel y se calcula el **precio promedio ponderado (VWAP)**. Esto modela el **slippage real**: una orden grande "come" varios niveles y paga más caro. Si el libro no tiene profundidad para llenar la orden, no hay señal. Es de solo lectura (gratis); cuando se pase a real, el mismo cálculo predice el fill efectivo.
+200: 
+201: ### 4. 5 Minutos Genera Más Datos
+202: Con 8,640 ventanas en 30 días, el bot de 5 minutos es el que más rápido acumula datos para validación.
+203: 
+204: ---
+205: 
+206: ## Problemas Conocidos y Soluciones
+207: 
+208: ### Bug de Volumen Equivocado → Liquidez (Corregido)
+209: - **Problema**: `obtener_mercado` leía `event.volume24hr` (≈$10–20, casi vacío) que al ser truthy ocultaba el volumen real del mercado. Además el "volumen 24h" no tiene sentido en mercados de 5/15 min que se recrean cada ventana. Resultado: el filtro de $5,000 rechazaba casi todas las señales de 5m y 15m.
+210: - **Solución**: Se lee a nivel de **mercado** (`volumeNum`/`liquidityNum`) y el filtro ahora usa **liquidez** (profundidad del libro ≈ $9k–15k), que es la métrica correcta para slippage. Verificado contra la API: 5m liq≈$10k, 15m liq≈$13k, 1h liq≈$9k (todos pasan).
+211: - **Estado**: Corregido en los 4 bots (vía `cli_util.parse_mercado`).
+212: 
+213: ### Bug de Punto Flotante (Corregido)
+214: - **Problema**: Los cálculos de caída pueden tener errores de precisión de punto flotante (ej: 0.00050000000001 en lugar de 0.0005).
+215: - **Solución**: Se aplica `round(caida, 6)` antes de comparar con los límites del mapa de probabilidades.
+216: - **Estado**: Corregido en los 4 bots.
+217: 
+218: ### Mercado de 30 Minutos No Existe
+219: - **Problema**: Polymarket no ofrece mercados de 30 minutos para BTC.
+220: - **Solución**: Se eliminó el bot de 30 minutos. El sistema se quedó con 5m, 15m y 1h.
+221: 
+222: ### Bug de Precio $0.00 de Polymarket (Corregido)
+223: - **Problema**: Cuando Polymarket no devuelve datos reales para un mercado, el precio de la acción "UP" puede ser $0.00. El bot calculaba EV = Probabilidad - $0.00 = Probabilidad, generando falsas señales.
+224: - **Solución**: Se agregó un filtro que rechaza señales si el precio de Polymarket es menor a $0.01.
+225: - **Estado**: Corregido en los 3 bots.
+226: 
+227: ### Mercado de 4 Horas - No Existe en Polymarket
+228: - **Problema**: Polymarket **no publica** mercados BTC up/down de 4 horas (el slug devuelve 0 eventos).
+229: - **Decisión**: Se **retiró** el bot de 4h del sistema. Solo quedan 5m, 15m y 1h, que sí tienen mercado real.
+230: - **Estado**: Resuelto (bot eliminado).
+231: 
+232: ### Bots con Mercado No Encontrado puntualmente
+233: - **Problema**: Algunos timeframes pueden no tener mercado activo en Polymarket en un instante dado.
+234: - **Solución**: El bot reporta "mercado no encontrado" y continúa monitoreando.
+235: - **Estado**: Comportamiento esperado. No afecta la validación de la estrategia.
+236: 
+237: ---
+238: 
+239: ## Cómo Ejecutar el Sistema
+240: 
+241: ### Opción 1: Bot Maestro (Recomendado)
+242: ```bash
+243: python3 -u /home/penguin/Documentos/poly/master_bot.py
+244: ```
+245: Lanza los 3 bots simultáneamente y muestra su salida en tiempo real en una sola terminal.
+246: 
+247: ### Opción 2: Bots Individuales
+248: ```bash
+249: # En terminales separadas:
+250: python3 -u /home/penguin/Documentos/poly/1_hora/paper_trading_bot.py
+251: python3 -u /home/penguin/Documentos/poly/15_minutos/paper_trading_bot_15m.py
+252: python3 -u /home/penguin/Documentos/poly/5_minutos/paper_trading_bot_5m.py
+253: ```
+254: 
+255: ### Para detener
+256: Presionar `Ctrl + C` en la terminal del maestro (o en cada terminal individual).
+257: 
+258: ### Para revisar datos acumulados
+259: ```bash
+260: cat /home/penguin/Documentos/poly/1_hora/senales_1h.csv
+261: cat /home/penguin/Documentos/poly/15_minutos/senales_15m.csv
+262: cat /home/penguin/Documentos/poly/5_minutos/senales_5m.csv
+263: ```
+264: 
+265: ---
+266: 
+267: ## Tiempos de Validación Recomendados
+268: 
+269: | Timeframe | Tiempo mínimo | Señales esperadas |
+270: | :--- | :--- | :--- |
+271: | 5 Minutos | 6-8 horas | ~40-56 señales |
+272: | 15 Minutos | 12-16 horas | ~20-30 señales |
+273: | 1 Hora | 2-3 días | ~15-20 señales |
+274: 
+275: ---
+276: 
+277: ## Próximos Pasos
+278: 
+279: 1. **Ejecutar validación**: Correr el sistema durante los tiempos recomendados.
+280: 2. **Analizar resultados**: Revisar los CSVs para calcular la tasa de acierto real.
+281: 3. **Comparar con histórica**: Si la tasa real se acerca a la probabilidad temporal estimada, la estrategia está validada.
+282: 4. **Ajustar parámetros**: Si la tasa es significativamente menor, ajustar los umbrales de caída o el margen de EV.
+283: 5. **Posible implementación con capital real**: Solo después de validación exitosa.
+284: 
+285: ---
+286: 
+287: ## Notas Técnicas
+288: 
+289: ### Dependencias
+290: - Python 3.x
+291: - aiohttp (para requests asíncronos)
+292: - No requiere dependencias adicionales (usa solo librerías estándar + aiohttp)
+293: 
+294: ### APIs Utilizadas
+295: - Binance API pública (sin autenticación requerida)
+296: - Polymarket Gamma API pública (sin autenticación requerida)
+297: 
+298: ### Persistencia de Datos
+299: - Los CSVs se abren en modo `append` ('a'), por lo que los datos se acumulan entre ejecuciones.
+300: - Los encabezados solo se escriben si el archivo no existe.
+301: - Ejecutar el bot múltiples veces NO sobrescribe los datos anteriores.
+302: 
+303: ### Auto-calibración
+304: - Cada bot descarga 30 días de datos de Binance al iniciar.
+305: - Los parámetros se recalculan automáticamente cada 24 horas.
+306: - No hay parámetros estáticos ni hardcodeados (excepto los filtros de seguridad).
+307: 
+308: ---
+309: 
+310: ## Historial de Desarrollo
+311: 
+312: - **2026-06-03**: Creación del sistema completo.
+313:   - Análisis histórico de Binance (30 días) para 5m, 15m, 1h.
+314:   - Creación de bots de 5m, 15m, 1h con auto-calibración.
+315:   - Creación del bot maestro.
+316:   - Corrección del bug de punto flotante.
+317:   - Eliminación del bot de 30 minutos (no existe en Polymarket).
+318:   - Pruebas exitosas de todos los componentes.
+319: - **Actualización**: correcciones de robustez y realismo.
+320:   - Corrección del bug de volumen → filtro por **liquidez**.
+321:   - Salida CLI en español con iconos y P&L (🔴 señal · 🟢/🔴 resultado).
+322:   - Probabilidad **condicionada al tiempo** (corrige el look-ahead bias).
+323:   - Precio de entrada = **fill simulado por profundidad del CLOB (VWAP)**, no el punto medio ni solo el mejor ask. Modela el slippage real; solo lectura.
+324:   - Retiro del bot de 4 horas (sin mercado en Polymarket).
+325: 
+326: ---
+327: 
+328: ## Contacto y Contexto
+329: 
+330: Este sistema fue desarrollado como un proyecto de trading cuantitativo para mercados de predicción. La estrategia se basa en la **reversión a la media** (mean reversion), una de las estrategias estadísticamente más sólidas en mercados financieros de corto plazo.
+331: 
+332: **Principio fundamental**: El mercado de Polymarket a veces sobre-reacciona a pequeñas fluctuaciones de precio, creando oportunidades donde la probabilidad implícita del mercado es menor que la probabilidad real calculada históricamente. El bot detecta estas discrepancias y las registra como señales de compra de alto valor esperado.
+</file>
+
+</files>
