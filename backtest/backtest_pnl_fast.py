@@ -1,16 +1,16 @@
-"""Sweep de EV_MIN y MIN_PROB para encontrar la mejor combinación de parámetros.
+"""Backtest rápido con solo parámetros optimizados.
 
-Prueba todas las combinaciones y reporta cuál maximiza P&L evitando la selección adversa.
+Basado en el sweep anterior (MIN_PROB=0.60 da mejor calibración),
+prueba 3 niveles de EV_MIN para encontrar el punto de equilibrio.
 """
 import asyncio
 import sys
 import os
 import aiohttp
 import json as _j
-from itertools import product
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from backtest_lib import descargar_cacheado, recolectar_señales, DAY_MS
+from backtest.backtest_lib import descargar_cacheado, recolectar_señales, DAY_MS
 
 TRAIN_DAYS = 21
 TEST_DAYS_PNL = 6
@@ -19,11 +19,17 @@ FEE = 0.01
 CONCURRENCIA = 8
 VENTANA_S = {"5m": 300, "15m": 900}
 
-# Parámetros a barrer
-MIN_PROBS = [0.55, 0.57, 0.60, 0.62]
-EV_MINS = [0.05, 0.10, 0.15, 0.20, 0.25]
-
 UA = {"User-Agent": "Mozilla/5.0"}
+
+# Parámetros a probar: MIN_PROB optimizado + varios EV_MIN
+CONFIGS = [
+    {"min_prob": 0.55, "ev_min": 0.05, "label": "baseline"},
+    {"min_prob": 0.55, "ev_min": 0.15, "label": "EV+3x"},
+    {"min_prob": 0.55, "ev_min": 0.25, "label": "EV+5x"},
+    {"min_prob": 0.60, "ev_min": 0.05, "label": "prob+5%"},
+    {"min_prob": 0.60, "ev_min": 0.15, "label": "combo"},
+    {"min_prob": 0.60, "ev_min": 0.25, "label": "combo+EV"},
+]
 
 
 async def get_json(session, url):
@@ -32,7 +38,6 @@ async def get_json(session, url):
 
 
 async def datos_mercado(session, sem, interval, ts, elapsed):
-    """Devuelve (precio_up_en_señal, resolucion) o (None, None) si no hay datos."""
     win_s = VENTANA_S[interval]
     slug = f"btc-updown-{interval}-{ts}"
     async with sem:
@@ -83,12 +88,10 @@ async def datos_mercado(session, sem, interval, ts, elapsed):
 
 
 async def correr(interval, candles, min_prob, ev_min):
-    """Evalúa una combinación de parámetros."""
-    señales, base_total, base_up = recolectar_señales(
+    señales, _, _ = recolectar_señales(
         interval, candles, TRAIN_DAYS, days_full_test := 14,
         min_prob=min_prob, min_caida=0.0)
 
-    # Acotar a los últimos TEST_DAYS_PNL días
     if señales:
         ts_max = max(s["ts"] for s in señales)
         corte = ts_max - TEST_DAYS_PNL * 86400
@@ -102,12 +105,10 @@ async def correr(interval, candles, min_prob, ev_min):
         tareas = [datos_mercado(session, sem, interval, s["ts"], s["elapsed"]) for s in señales]
         datos = await asyncio.gather(*tareas)
 
-    con_precio = 0
     operadas = []
     for s, (precio, res) in zip(señales, datos):
         if precio is None or res is None:
             continue
-        con_precio += 1
         fill = precio + FEE
         ev = s["prob"] - fill
         gano = (res == "UP")
@@ -139,27 +140,26 @@ async def main():
     print(f"  {len(candles)} velas.\n", flush=True)
 
     for interval in ("5m", "15m"):
-        print(f"\n{'='*90}")
-        print(f"  {interval.upper()}  ·  Barriendo MIN_PROB x EV_MIN (últimos {TEST_DAYS_PNL}d)")
-        print(f"{'='*90}")
-        print(f"{'MIN_PROB':>8} {'EV_MIN':>7} | {'Trades':>6} {'Win%':>6} {'P&L/share':>11} "
-              f"{'ROI':>7} {'P&L/trade':>11} | {'Veredicto':>10}")
-        print("  " + "-" * 85)
+        print(f"\n{'='*85}")
+        print(f"  {interval.upper()}  ·  Parámetros optimizados (últimos {TEST_DAYS_PNL}d)")
+        print(f"{'='*85}")
+        print(f"{'MIN_PROB':>8} {'EV_MIN':>7} {'Label':>10} | {'Trades':>6} {'Win%':>6} "
+              f"{'P&L/share':>11} {'ROI':>7} | {'Veredicto':>10}")
+        print("  " + "-" * 80)
 
-        for min_prob in MIN_PROBS:
-            for ev_min in EV_MINS:
-                result = await correr(interval, candles, min_prob, ev_min)
-                if result is None:
-                    print(f"  {min_prob:>8.2f} {ev_min:>7.2f} | {'—':>6} {'—':>6} {'—':>11} "
-                          f"{'—':>7} {'—':>11} | {'sin datos':>10}")
-                else:
-                    pnl = result["pnl_total"]
-                    roi = result["roi"] * 100
-                    win_pct = result["win_rate"] * 100
-                    veredicto = "✓ RENTABLE" if pnl > 0 else "❌ PIERDE"
-                    print(f"  {min_prob:>8.2f} {ev_min:>7.2f} | {result['n_trades']:>6} "
-                          f"{win_pct:>6.1f} {pnl:>+11.2f} {roi:>+7.1f}% {result['pnl_por_trade']:>+11.4f} "
-                          f"| {veredicto:>10}")
+        for config in CONFIGS:
+            result = await correr(interval, candles, config["min_prob"], config["ev_min"])
+            if result is None:
+                print(f"  {config['min_prob']:>8.2f} {config['ev_min']:>7.2f} "
+                      f"{config['label']:>10} | {'—':>6} {'—':>6} {'—':>11} {'—':>7} | {'sin datos':>10}")
+            else:
+                pnl = result["pnl_total"]
+                roi = result["roi"] * 100
+                win_pct = result["win_rate"] * 100
+                veredicto = "✓ RENTABLE" if pnl > 0 else "❌ PIERDE"
+                print(f"  {config['min_prob']:>8.2f} {config['ev_min']:>7.2f} "
+                      f"{config['label']:>10} | {result['n_trades']:>6} {win_pct:>6.1f} "
+                      f"{pnl:>+11.2f} {roi:>+7.1f}% | {veredicto:>10}")
 
 
 if __name__ == "__main__":

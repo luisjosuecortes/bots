@@ -20,7 +20,7 @@ import os
 import aiohttp
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from backtest_lib import descargar_cacheado, recolectar_señales, DAY_MS
+from backtest.backtest_lib import descargar_cacheado, recolectar_señales, DAY_MS
 
 TRAIN_DAYS = 21
 TEST_DAYS_PNL = 6          # días de test para P&L (acotado: 1 req HTTP por señal)

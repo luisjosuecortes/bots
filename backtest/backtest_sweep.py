@@ -7,7 +7,7 @@ tasa base. Objetivo: ver qué ajuste sube el win-rate sin secar las señales.
 El margen EV NO se barre aquí (requiere precio de Polymarket) — eso va en el
 backtest de P&L real. Aquí medimos la CALIDAD de la señal del modelo.
 """
-from backtest_lib import descargar_cacheado, recolectar_señales
+from backtest.backtest_lib import descargar_cacheado, recolectar_señales
 
 TRAIN_DAYS = 21
 TEST_DAYS = 14
